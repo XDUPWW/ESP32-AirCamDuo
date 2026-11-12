@@ -1,0 +1,18 @@
+# ESP32-C5HR8: 16 MB flash (external), 8 MB PSRAM in package
+CONFIG_ESPTOOLPY_FLASHSIZE_16MB=y
+
+# Console on UART0 (GPIO11 TX / GPIO12 RX) -> onboard CH343 USB-UART
+CONFIG_ESP_CONSOLE_UART_DEFAULT=y
+CONFIG_ESP_CONSOLE_UART_BAUDRATE=115200
+
+# Wi-Fi + HTTP client + JPEG decoder do not fit the 1 MB single-app layout.
+CONFIG_PARTITION_TABLE_CUSTOM=y
+CONFIG_PARTITION_TABLE_CUSTOM_FILENAME="partitions.csv"
+
+# The camera fetch and the JPEG fallback run on the main task.
+CONFIG_ESP_MAIN_TASK_STACK_SIZE=8192
+
+# 160x120 grey frames are sent uncompressed, so a larger receive window keeps
+# the frame rate up.
+CONFIG_LWIP_TCP_WND_DEFAULT=16384
+CONFIG_LWIP_TCP_SND_BUF_DEFAULT=16384

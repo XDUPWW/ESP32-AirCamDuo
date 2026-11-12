@@ -1,0 +1,68 @@
+menu "ESP32-C5 camera viewer"
+
+    config APP_AP_SSID
+        string "SoftAP SSID"
+        default "ESP32-C5-CAM"
+        help
+            Name of the access point the ESP32-CAM joins. Keep it in sync with
+            CONFIG_APP_WIFI_STA_SSID on the camera firmware.
+
+    config APP_AP_HIDDEN
+        bool "Hide the SoftAP SSID"
+        default y
+        help
+            A hidden AP does not answer scans; stations (and phones) must be
+            told the SSID explicitly. The camera joins by SSID, so it is not
+            affected.
+
+    config APP_AP_PASSWORD
+        string "SoftAP password (at least 8 characters)"
+        default "c5cam12345"
+        help
+            WPA2 password for the access point. Shorter values open an
+            unencrypted network, which the camera still joins.
+
+    config APP_UDP_PORT
+        int "UDP port the camera sends to"
+        range 1024 65535
+        default 5000
+        help
+            Must match the camera's CONFIG_APP_UDP_PORT.
+
+    config APP_AP_CHANNEL
+        int "SoftAP channel"
+        range 1 13
+        default 6
+        help
+            Channel of the 2.4 GHz access point. 1, 6 and 11 do not overlap;
+            pick whichever is quietest where the board is installed. A busy
+            channel shows up as a low frame rate.
+
+    config APP_BUTTON_GPIO
+        int "Button GPIO (IO0 by default)"
+        range 0 28
+        default 0
+        help
+            The viewer board's BOOT/IO0 button. On some boards the BOOT button
+            is wired to a different pin; set it here.
+
+    config APP_BUTTON_ACTIVE_LOW
+        bool "Button pulls the GPIO low when pressed"
+        default y
+
+    config APP_VIEW_GAIN
+        int "Display brightness gain (percent)"
+        range 50 300
+        default 110
+        help
+            Multiplies the grey value before it is reduced to one bit. Useful
+            for dim scenes on the small panel.
+
+    config APP_VIEW_DITHER
+        bool "Floyd-Steinberg dithering"
+        default y
+        help
+            Spreads the grey error over neighbouring pixels. Without dithering
+            every pixel above mid-grey is lit, which loses most of the detail.
+
+endmenu

@@ -1,0 +1,239 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>ESP32-CAM</title>
+<style>
+  body { font-family: system-ui, sans-serif; margin: 1.5rem; background: #111; color: #eee; }
+  h1 { font-size: 1.2rem; font-weight: 600; margin: 0 0 0.75rem; }
+  .bar { display: flex; gap: 0.5rem; align-items: center; flex-wrap: wrap; margin-bottom: 0.75rem; }
+  button { background: #1d2b3a; color: #cfe6ff; border: 1px solid #2c4a63; padding: 0.35rem 0.7rem;
+           border-radius: 4px; font: inherit; cursor: pointer; }
+  button:hover { background: #24435c; }
+  button.active { background: #2f6b96; border-color: #4a97c9; color: #fff; }
+  label { font-size: 0.85rem; color: #bbb; }
+  #hint { font-size: 0.8rem; color: #7fa8c9; }
+  img, canvas { display: block; background: #000; border: 1px solid #333; width: 320px; height: 240px; }
+  .note { font-size: 0.78rem; color: #888; max-width: 40rem; line-height: 1.5; }
+  code { color: #9cdcfe; }
+</style>
+</head>
+<body>
+<h1>ESP32-CAM</h1>
+
+<div class="bar">
+  <button id="btn-jpeg">彩色 JPEG 流</button>
+  <button id="btn-gray">原始灰度流</button>
+  <label><input type="checkbox" id="mono"> 以灰度显示（客户端滤镜）</label>
+  <span id="hint">连接中…</span>
+</div>
+
+<div>
+  <img id="img" width="320" height="240" alt="stream" hidden>
+  <canvas id="cv" width="320" height="240" hidden></canvas>
+</div>
+
+<p class="note">
+  JPEG 模式下板子直接转发传感器的压缩帧（320×240，约 50 fps）；灰度模式下传感器输出
+  160×120 的 YUV422，板子只做一次「取每个像素对的第一个字节」的步进拷贝，把 8bit 灰度发出来，
+  约 19 KB/帧——这样未压缩数据才塞得进 Wi-Fi。
+  机器读取用 <code>GET /raw</code>（单帧 8bit 灰度，带 X-Frame-Width/Height/Format 头）。
+</p>
+
+<script>
+const img = document.getElementById('img');
+const cv = document.getElementById('cv');
+const ctx = cv.getContext('2d', { willReadFrequently: true });
+const hint = document.getElementById('hint');
+const mono = document.getElementById('mono');
+const btnJpeg = document.getElementById('btn-jpeg');
+const btnGray = document.getElementById('btn-gray');
+
+let abort = null;
+let imageData = null;
+let generation = 0;   // bumped on every stop, so stale retries stay inert
+
+function applyMono() {
+  const filter = mono.checked ? 'grayscale(1)' : 'none';
+  img.style.filter = filter;
+  cv.style.filter = filter;
+}
+
+function stopStream() {
+  generation++;
+  if (abort) { abort.abort(); abort = null; }
+  img.onerror = null;
+  img.removeAttribute('src');
+}
+
+function markActive(which) {
+  btnJpeg.classList.toggle('active', which === 'jpeg');
+  btnGray.classList.toggle('active', which === 'gray');
+}
+
+function headerEnd(buf) {
+  for (let i = 0; i + 3 < buf.length; i++) {
+    if (buf[i] === 13 && buf[i + 1] === 10 && buf[i + 2] === 13 && buf[i + 3] === 10) return i;
+  }
+  return -1;
+}
+
+// Uncompressed frames are large, so the format travels with the stream.
+function drawGray(frame, format) {
+  const w = cv.width, h = cv.height, n = w * h;
+  if (!imageData || imageData.width !== w || imageData.height !== h) {
+    imageData = ctx.createImageData(w, h);
+  }
+  const d = imageData.data;
+  const stride = format === 'yuyv422' ? 2 : 1;
+
+  for (let i = 0, j = 0; i < n; i++, j += stride) {
+    const y = frame[j];
+    const o = i << 2;
+    d[o] = y; d[o + 1] = y; d[o + 2] = y; d[o + 3] = 255;
+  }
+  ctx.putImageData(imageData, 0, 0);
+}
+
+function startJpeg() {
+  stopStream();
+  const gen = generation;
+  cv.hidden = true;
+  img.hidden = false;
+  markActive('jpeg');
+
+  let tries = 0;
+  const load = () => {
+    if (generation !== gen || img.hidden) return;
+    img.src = '/stream?t=' + Date.now() + '&g=' + gen;
+  };
+  img.onerror = () => {
+    if (generation !== gen) return;
+    if (tries++ < 8) setTimeout(load, 600);
+    else hint.textContent = '流连接失败（设备忙或模式切换中）';
+  };
+  load();
+}
+
+async function startGray(attempt = 0) {
+  stopStream();
+  const gen = generation;
+  img.hidden = true;
+  cv.hidden = false;
+  markActive('gray');
+
+  const ctrl = new AbortController();
+  abort = ctrl;
+
+  let res;
+  try {
+    res = await fetch('/stream?t=' + Date.now(), { signal: ctrl.signal, cache: 'no-store' });
+  } catch (e) {
+    return;
+  }
+  if (generation !== gen) return;
+  if (!res.ok) {
+    if (attempt < 8) { setTimeout(() => { if (generation === gen) startGray(attempt + 1); }, 600); return; }
+    hint.textContent = await res.text();
+    return;
+  }
+
+  const reader = res.body.getReader();
+  const width = parseInt(res.headers.get('X-Frame-Width') || '160', 10);
+  const height = parseInt(res.headers.get('X-Frame-Height') || '120', 10);
+  const format = res.headers.get('X-Frame-Format') || 'gray8';
+  if (cv.width !== width || cv.height !== height) {
+    cv.width = width;
+    cv.height = height;
+    imageData = null;
+  }
+
+  let buf = new Uint8Array(0);
+  let frames = 0;
+
+  try {
+    for (;;) {
+      const { value, done } = await reader.read();
+      if (done) break;
+      if (generation !== gen) { reader.cancel().catch(() => {}); break; }
+
+      const merged = new Uint8Array(buf.length + value.length);
+      merged.set(buf);
+      merged.set(value, buf.length);
+      buf = merged;
+
+      for (;;) {
+        const end = headerEnd(buf);
+        if (end < 0) break;
+
+        const head = new TextDecoder().decode(buf.subarray(0, end));
+        const match = /Content-Length:\s*(\d+)/i.exec(head);
+        if (!match) { buf = buf.subarray(end + 4); continue; }
+
+        const len = parseInt(match[1], 10);
+        const start = end + 4;
+        if (buf.length < start + len) break;
+
+        drawGray(buf.subarray(start, start + len), format);
+        buf = buf.subarray(start + len);
+        frames++;
+        hint.textContent = `原始灰度 ${width}×${height} · 已收 ${frames} 帧`;
+      }
+    }
+  } catch (e) {
+    // aborted by a mode switch
+  }
+}
+
+async function setMode(mode) {
+  stopStream();
+  hint.textContent = '切换模式中…';
+
+  let switched = false;
+  for (let attempt = 0; attempt < 24; attempt++) {
+    let res;
+    try {
+      res = await fetch('/mode?set=' + mode, { cache: 'no-store' });
+    } catch (e) {
+      await new Promise((r) => setTimeout(r, 500));
+      continue;
+    }
+    if (res.ok) { switched = true; break; }
+    if (res.status !== 409) { hint.textContent = await res.text(); return; }
+    if (attempt === 4) hint.textContent = '等待上一个流断开…';
+    await new Promise((r) => setTimeout(r, 500));
+  }
+
+  if (!switched) { hint.textContent = '切换失败：设备一直忙'; return; }
+
+  await new Promise((r) => setTimeout(r, 150));
+  if (mode === 'gray') startGray(); else startJpeg();
+}
+
+(async function init() {
+  applyMono();
+  mono.addEventListener('change', applyMono);
+  btnJpeg.addEventListener('click', () => setMode('jpeg'));
+  btnGray.addEventListener('click', () => setMode('gray'));
+
+  try {
+    const status = await (await fetch('/status', { cache: 'no-store' })).json();
+    if (status.mode === 'yuyv422') startGray(); else startJpeg();
+  } catch (e) {
+    hint.textContent = '无法连接板子';
+  }
+
+  setInterval(async () => {
+    try {
+      const s = await (await fetch('/status', { cache: 'no-store' })).json();
+      if (!cv.hidden && s.mode === 'yuyv422') return;  // keep the frame counter visible
+      hint.textContent = `${s.mode} · 流 ${s.frames.stream} 帧 · ${s.streams} 个连接`;
+    } catch (e) {
+      hint.textContent = '板子无响应';
+    }
+  }, 2000);
+})();
+</script>
+</body>
+</html>

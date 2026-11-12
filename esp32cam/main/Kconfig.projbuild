@@ -1,0 +1,131 @@
+menu "ESP32-CAM"
+
+    choice APP_WIFI_MODE
+        prompt "Network mode"
+        default APP_WIFI_MODE_STA
+
+        config APP_WIFI_MODE_STA
+            bool "Join the viewer's network and keep retrying"
+
+        config APP_WIFI_MODE_AP
+            bool "Always run a SoftAP"
+    endchoice
+
+    config APP_WIFI_STA_SSID
+        string "SSID of the network to join"
+        default ""
+        help
+            Leave empty to always start the SoftAP. Must match the viewer's
+            CONFIG_APP_AP_SSID (the ESP32-C5 image defaults to ESP32-C5-CAM).
+
+    config APP_WIFI_STA_PASSWORD
+        string "Password of the network to join"
+        default ""
+        help
+            Must match the viewer's CONFIG_APP_AP_PASSWORD.
+
+    config APP_WIFI_AP_SSID
+        string "SoftAP SSID"
+        default "ESP32-CAM"
+        help
+            Name of the access point the camera opens.
+
+    config APP_WIFI_AP_PASSWORD
+        string "SoftAP password (at least 8 characters)"
+        default "esp32cam123"
+        help
+            WPA2 password for the access point. Shorter values open an
+            unencrypted network.
+
+    choice APP_JPEG_SIZE
+        prompt "JPEG frame size (/jpg, MJPEG stream, web UI)"
+        default APP_JPEG_QQVGA
+        help
+            The viewer panel is only 128x64, and smaller frames are the
+            cheapest way to raise the frame rate over Wi-Fi.
+
+        config APP_JPEG_QQVGA
+            bool "QQVGA 160x120 (lighter, faster)"
+
+        config APP_JPEG_QVGA
+            bool "QVGA 320x240 (more detail)"
+    endchoice
+
+    choice APP_UDP_SOURCE
+        prompt "Frames fed to the UDP sender"
+        default APP_UDP_SOURCE_JPEG
+        help
+            YUV422 raw lets the sender sample the luma plane directly: no JPEG
+            decode, no RGB565 buffer. JPEG keeps the web UI in MJPEG but costs
+            a decode per frame.
+
+        config APP_UDP_SOURCE_RAW
+            bool "YUV422 raw, luma sampled directly"
+            help
+                The OV2640 only produces ~13.5 fps in YUV422 QQVGA with this
+                driver, so this is slower than the JPEG path in practice.
+
+        config APP_UDP_SOURCE_JPEG
+            bool "JPEG, decoded on the camera (recommended)"
+    endchoice
+
+    config APP_UDP_ENABLE
+        bool "Send panel-sized grey frames to the viewer over UDP"
+        default y
+        help
+            The camera decodes its own JPEG frames, reduces them to the
+            panel's 128x64 and sends that over UDP. The viewer then only has
+            to draw, and the link carries 8.2 kB per frame instead of the
+            camera's JPEG.
+
+    config APP_UDP_HOST
+        string "Viewer address"
+        default "192.168.4.1"
+        depends on APP_UDP_ENABLE
+        help
+            The viewer is the access point, so its address is the AP's IP.
+
+    config APP_UDP_PORT
+        int "Viewer UDP port"
+        default 5000
+        range 1024 65535
+        depends on APP_UDP_ENABLE
+
+    config APP_FLASH_DARK_AEC
+        int "Turn the flash on above this sensor AEC value"
+        range 0 1200
+        default 600
+        help
+            OV2640 exposure value (0-1200): rises in dim light. The light is
+            switched on when the scene stays darker than this.
+
+    config APP_FLASH_BRIGHT_AEC
+        int "Turn the flash off below this sensor AEC value"
+        range 0 1200
+        default 250
+        help
+            With the light on, a bright scene drives the exposure below this
+            value, so the light is no longer needed.
+
+    config APP_FLASH_DWELL_MS
+        int "Minimum milliseconds between flash changes"
+        range 500 30000
+        default 3000
+
+    config APP_UDP_ADAPT
+        bool "Adapt the send interval from the viewer's fps feedback"
+        default y
+        help
+            Disable to keep a fixed interval, e.g. to measure the pipeline's
+            ceiling with APP_UDP_INTERVAL_MS=0.
+
+    config APP_UDP_INTERVAL_MS
+        int "Milliseconds between sent frames"
+        default 10
+        range 0 2000
+        depends on APP_UDP_ENABLE
+        help
+            Starting interval; the camera then follows the viewer's feedback
+            to stay between 14 and 18 fps.
+
+endmenu
