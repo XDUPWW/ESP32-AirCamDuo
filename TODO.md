@@ -1,47 +1,55 @@
-# TODO / Roadmap — DualLuma VF
+# Current gaps and roadmap — ESP32-DuoVF
 
-Status of known gaps after the v1.0 documentation review. Checked items are implemented in the current tree.
+Status legend: **Done** / **P0** (needed before an alpha release) / **P1** (robustness and usability) / **P2** (engineering hygiene).
 
 ## Done
 
-- [x] UDP luma link: 128×64 gray8, 6 fragments, 18.5–20.5 fps
+- [x] UDP gray8 link: 128×64, 6 fragments, 18.5–20.5 fps measured
 - [x] tjpgd Y-only decode on the camera (encode 11–12 ms)
-- [x] UDP reassembly with `frame_id` + 64-bit mask, latest-frame mailbox
-- [x] Adaptive send interval from viewer feedback (15–20 fps target)
+- [x] UDP reassembly with `frame_id` + receiver-side 64-bit fragment mask
+- [x] Adaptive send interval from viewer feedback (product target 15–20 fps, deadband 18–20 fps, acceptance ≥18 fps)
 - [x] JPEG frame buffer fix (3,840 B → 32 KB) for busy scenes
 - [x] Auto flash: AEC + panel-average fallback, hysteresis and 3 s dwell
 - [x] Hidden SoftAP by default
-- [x] Viewer photo freeze / long-press resume (logic in place)
-- [x] English README + Chinese technical design doc
+- [x] Single-key photo-freeze logic (hardware unverified)
+- [x] English README + Chinese technical design document
 
-## P0 — before calling it a product
+## P0 — alpha release
 
-- [ ] **Confirm the viewer button GPIO.** `APP_BUTTON_GPIO=0` produces no events on the current board. Identify the BOOT pin (0/9/28?) or wire a button to a free pin, then update Kconfig.
-- [ ] **Camera-side shutter.** Use a free camera GPIO (e.g. GPIO13) and a small control packet, so the shutter is on the camera like the reference DIY-Camera.
-- [ ] **SD card photo capture.** The camera already has a microSD slot. Use SDMMC **1-bit** (CLK 14, CMD 15, D0 2) to keep the flash LED on GPIO4. Save the full JPEG to `IMG_%04u.JPG`, keep the counter in NVS, and show `SAVED IMG_0007` on the viewer.
-- [ ] **Long-run validation.** ≥24 h soak, complex scenes, temperature and range; confirm no `CAMERA LOST` after the 32 KB buffer fix.
-- [ ] **Power/thermal measurement.** Current draw, regulator temperature, Wi-Fi duty cycle.
+| Item | What | Acceptance | Dependency | Affected docs |
+|---|---|---|---|---|
+| C5 multi-button controls | Separate `KEY_FREEZE`, `KEY_SHUTTER`, `KEY_PREVIEW` on spare C5 GPIOs (avoid strapping/BOOT pins). Define per-key GPIO, active level, debounce, semantics in VIDEO / FROZEN / PREVIEW. Kconfig: `APP_BUTTON_FREEZE_GPIO`, `APP_BUTTON_SHUTTER_GPIO`, `APP_BUTTON_PREVIEW_GPIO`. Camera-side shutter is an **alternative**, not the primary plan. | Each key produces independent events; no double-click gestures; long press only for “force back to video” | Confirm available GPIOs and physical buttons on the viewer board | Technical doc 5.2.6 / 7.2 / 7.5.2 / 7.7 / 11.3; README features |
+| Viewer button pin | Confirm the actual BOOT/IO0 GPIO (current `APP_BUTTON_GPIO=0` produces no events) | Press/release/long-press logs appear; freeze/resume works | Board schematic or multimeter | README limits; technical doc 5.2.6 |
+| Shutter semantics | Decide: save the current frame directly, or freeze first then save; whether video continues during save | Defined behavior in the state machine; user-visible SAVED feedback | P0 multi-button + SD | Technical doc 7.5.2 / 10.6 |
+| SD JPEG capture | SDMMC **1-bit** (CLK14/CMD15/D0 2, keeping GPIO4 flash); write `IMG_%04u.JPG`; NVS counter; increment only after a successful write; dedicated low-priority photo task with a depth-1 queue | Files readable on PC; counter survives reboot; writes do not stall the UDP/display path | SD hardware verification, FAT32 card | Technical doc 10.6; README features/config |
+| Image preview switching | `PREVIEW` / `REVIEW` states; data source: SD photo list (`/photos/last.jpg` over HTTP) or last N frames in RAM; rendering 1bpp + index/filename | Switch live/last photo/list within the defined time; no corruption; return to LIVE | SD capture or RAM ring buffer | Technical doc 7.5.2 / 10.6; README planned |
+| Long-run validation | ≥24 h soak, complex scenes, temperature and range; confirm no `CAMERA LOST` after the 32 KB fix | No reboot/leak; fps and heap stable | Two boards + bench | Technical doc 10.4 |
 
 ## P1 — robustness and usability
 
-- [ ] Feedback-loss recovery: if no feedback for N seconds, slowly increase the rate or reset the interval (currently frozen).
-- [ ] Fragment NACK or FEC for larger frames / worse links.
-- [ ] Photo review over HTTP: `/photos` list and `/photos/last.jpg`; the viewer or a phone on the AP can browse.
-- [ ] Manual flash override (auto / on / off) via a long press.
-- [ ] Camera-side status packet: photo count, save result, SD free space.
-- [ ] Battery option: LiPo + TP4056 + ADC monitor + deep sleep / power latch.
-- [ ] Protocol version field (use `reserved`) and compatibility rules.
+| Item | What | Acceptance | Dependency | Affected docs |
+|---|---|---|---|---|
+| Feedback-loss recovery | If no feedback for N seconds, gradually raise the rate or reset the interval | Recovers within N seconds; no runaway | — | Technical doc 8.5.3 |
+| Fragment NACK / FEC | Recover a missing fragment for larger frames or worse links | Lower drop rate at fixed fps | Protocol extension | Technical doc 8.8 |
+| Photo review over HTTP | `/photos` list and `/photos/last.jpg` on the camera | Phone on the AP can browse; viewer can fetch a thumbnail | SD capture | Technical doc 10.6 |
+| Manual flash override | Auto / always-on / always-off via long press | Mode visible and persistent | Button plan | Technical doc 7.4.4 |
+| Camera status packet | Photo count, save result, SD free space to the viewer | Viewer shows `SAVED IMG_0007` / count | SD capture, protocol | Technical doc 7.1 / 10.6 |
+| Battery option | LiPo + TP4056 + ADC monitor + deep sleep / power latch | Portable runtime measured; low-battery warning | Hardware | README hardware |
+| Protocol versioning | Use `reserved` or a version field; compatibility rules | Old firmware ignores new fields without crashing | — | Technical doc 7.1 / 9.8 |
 
 ## P2 — engineering hygiene
 
-- [ ] Automated tests / CI (host-side parser tests, protocol round-trip).
-- [ ] OTA / dual-partition rollback.
-- [ ] Clean up dead code and stale docs; keep one final technical document.
-- [ ] Security review: UDP payload authentication, replay protection.
-- [ ] Production provisioning and calibration flow.
+| Item | What | Acceptance | Dependency | Affected docs |
+|---|---|---|---|---|
+| Tests / CI | Host-side protocol parser tests; UDP round-trip; build matrix | CI green on push | — | README / technical doc |
+| OTA / dual partition | OTA image, A/B rollback | Upgrade and rollback verified | Partition table | Technical doc 10.5 |
+| Dead-code / doc cleanup | One final technical doc; remove stale drafts | Repo has one source of truth | — | docs/ |
+| Security review | UDP payload authentication, replay protection | Threat model documented | Protocol change | Technical doc 10.5 |
+| Production provisioning | Serial/SoftAP provisioning and calibration | New board joins without recompiling | — | README |
 
 ## Non-goals (evaluated, not adopted)
 
-- RTSP + H.264/H.265: the ESP32/ESP32-C5 have no hardware video encoder/decoder, and the SSD1306 I2C refresh caps the panel at ~30–33 fps.
-- YUV422 raw streaming: the OV2640 only reaches ~13.5 fps in YUV422 QQVGA with this driver; JPEG capture is faster.
-- Partial OLED refresh: dithered frames change most pages, and an I2C glitch can leave a stale page; full refresh is self-healing.
+- **RTSP + H.264/H.265**: the ESP32/ESP32-C5 have no hardware video encoder/decoder, and the SSD1306 I2C refresh caps the panel at ~30–33 fps.
+- **YUV422 raw streaming**: the OV2640 only reaches ~13.5 fps in YUV422 QQVGA with this driver; JPEG capture is faster.
+- **Partial OLED refresh**: dithered frames change most pages, and an I2C glitch can leave a stale page; full refresh is self-healing.
+- **Camera-side shutter on GPIO13**: an alternative only; the primary plan is C5-side multi-button control.
