@@ -48,7 +48,7 @@ flowchart LR
 | ESP32-CAM (AI-Thinker) | OV2640, 4 MB flash, PSRAM; XCLK **GPIO0**; flash LED **GPIO4**; microSD slot (1-bit planned: CLK14/CMD15/D0 2) |
 | ESP32-C5 dev board | 16 MB flash; SoftAP + UDP receiver + OLED driver |
 | SSD1306 128×64 | I2C, 0x3C, SDA **GPIO8**, SCL **GPIO9**, 400 kHz |
-| Buttons | planned: `KEY_FREEZE` / `KEY_SHUTTER` / `KEY_PREVIEW` on spare C5 GPIOs (TBD); current firmware has a single GPIO0 button, unverified |
+| Buttons | planned: `KEY_FREEZE=GPIO3`, `KEY_SHUTTER=GPIO0`, `KEY_PREVIEW=GPIO1`, active low; current firmware has a single GPIO0 button, unverified |
 | Power | USB; LiPo/TP4056 is a future option |
 
 > The camera’s GPIO0 is the sensor XCLK and cannot be used as a user button. Use a spare camera GPIO (e.g. GPIO13) or the viewer’s buttons.
