@@ -1,12 +1,12 @@
-# ESP32-DuoVF
+# ESP32-AirCamDuo
 
 **Dual-board wireless viewfinder: ESP32-CAM + ESP32-C5 → SSD1306**
 
 > **Status: planning / alpha.** The core UDP gray8 link is implemented and measured. Hardware items (viewer buttons, C5 shutter, SD capture, image preview) are unverified or planned. See [TODO.md](TODO.md).
 
-ESP32-DuoVF streams a 128×64 grayscale luma frame from an ESP32-CAM to an ESP32-C5 over UDP and draws it on a 128×64 SSD1306 OLED. The camera performs the JPEG decode and panel-sized resampling; the viewer normally only reassembles and draws. A 1 Hz feedback packet lets the camera pace itself against the product target of 15–20 fps. The current control deadband is 18–20 fps so the measured result stays above the ≥18 fps acceptance line.
+ESP32-AirCamDuo streams a 128×64 grayscale luma frame from an ESP32-CAM to an ESP32-C5 over UDP and draws it on a 128×64 SSD1306 OLED. The camera performs the JPEG decode and panel-sized resampling; the viewer normally only reassembles and draws. A 1 Hz feedback packet lets the camera pace itself against the product target of 15–20 fps. The current control deadband is 18–20 fps so the measured result stays above the ≥18 fps acceptance line.
 
-**Naming boundary.** `DuoVF` means *dual-board viewfinder*; the current transport is grayscale luma. Full-JPEG capture to SD and image preview are planned and do not change the project name.
+**Naming boundary.** `AirCamDuo` = Air (wireless) + Cam (camera) + Duo (dual board); the current transport is grayscale luma. Full-JPEG capture to SD and image preview are planned and do not change the project name.
 
 ```mermaid
 flowchart LR
@@ -37,9 +37,9 @@ flowchart LR
 | Hidden SoftAP | **Implemented** | `ESP32-C5-CAM`; the camera joins by SSID |
 | Camera HTTP side channel | **Implemented** | `/`, `/stream`, `/jpg`, `/raw`, `/mode`, `/status` |
 | Photo-freeze logic | **Hardware-unverified** | short press freezes; hold ≥500 ms resumes. Viewer GPIO0 produces no events on the current board; actual BOOT pin TBD |
-| C5 multi-button controls | **Planned** | separate freeze / shutter / preview keys, GPIOs TBD |
-| SD JPEG capture | **Planned** | SDMMC 1-bit, `IMG_%04u.JPG`, NVS counter, `SAVED` feedback |
-| Image preview switching | **Planned** | `PREVIEW` / `REVIEW` states, SD photo list vs last N frames TBD |
+| C5 multi-button controls | **Planned** | decided: `KEY_FREEZE=GPIO3`, `KEY_SHUTTER=GPIO0`, `KEY_PREVIEW=GPIO1`, active low; GPIO0 is the BOOT strap |
+| SD JPEG capture | **Planned** | SDMMC 1-bit (CLK14/CMD15/D0 2), `IMG_%04u.JPG`, NVS counter, `SAVED` feedback; the viewer stays on the captured frame |
+| Image preview switching | **Planned** | last N (default 10) JPEGs from SD; `KEY_PREVIEW` cycles; long `KEY_FREEZE` exits |
 
 ## Hardware
 
@@ -97,7 +97,11 @@ cd esp32_oled && idf.py build && idf.py -p COM8 flash monitor
 | Viewer | `APP_AP_HIDDEN` | `y` |
 | Viewer | `APP_AP_CHANNEL` | `6` |
 | Viewer | `APP_UDP_PORT` | `5000` (feedback = +1) |
-| Viewer | `APP_BUTTON_GPIO` / `APP_BUTTON_ACTIVE_LOW` | `0` / `y` (hardware unverified) |
+| Viewer | `APP_BUTTON_GPIO` / `APP_BUTTON_ACTIVE_LOW` | `0` / `y` (current single key, hardware unverified) |
+| Viewer | `APP_BUTTON_FREEZE_GPIO` (planned) | `3` |
+| Viewer | `APP_BUTTON_SHUTTER_GPIO` (planned) | `0` (BOOT strap) |
+| Viewer | `APP_BUTTON_PREVIEW_GPIO` (planned) | `1` |
+| Viewer | `APP_PREVIEW_COUNT` (planned) | `10` |
 | Viewer | `APP_VIEW_GAIN` / `APP_VIEW_DITHER` | `110` / `y` |
 | Camera | `APP_WIFI_MODE` | `STA` (joins viewer AP) |
 | Camera | `APP_WIFI_STA_SSID` / `APP_WIFI_STA_PASSWORD` | `ESP32-C5-CAM` / `c5cam12345` |
@@ -108,7 +112,7 @@ cd esp32_oled && idf.py build && idf.py -p COM8 flash monitor
 | Camera | `APP_UDP_ADAPT` / `APP_UDP_INTERVAL_MS` | `y` / `10` |
 | Camera | `APP_FLASH_DARK_AEC` / `APP_FLASH_BRIGHT_AEC` / `APP_FLASH_DWELL_MS` | `600` / `250` / `3000` |
 
-Planned (not in firmware yet): `APP_BUTTON_FREEZE_GPIO`, `APP_BUTTON_SHUTTER_GPIO`, `APP_BUTTON_PREVIEW_GPIO`.
+Planned (not in firmware yet): `APP_BUTTON_FREEZE_GPIO=3`, `APP_BUTTON_SHUTTER_GPIO=0`, `APP_BUTTON_PREVIEW_GPIO=1`, `APP_PREVIEW_COUNT=10`.
 
 ## Repository layout
 
@@ -116,7 +120,7 @@ Planned (not in firmware yet): `APP_BUTTON_FREEZE_GPIO`, `APP_BUTTON_SHUTTER_GPI
 esp32cam/       ESP32-CAM firmware (JPEG capture, tjpgd grayscale, UDP sender, HTTP side channel)
   components/tjpgd_gray/   vendored tjpgd with a grayscale config
 esp32_oled/     ESP32-C5 firmware (SoftAP, UDP reassembly, SSD1306, button)
-docs/技术文档.md  Chinese technical design document (architecture, specs, tuning log)
+docs/TECHNICAL_DESIGN.md  Technical design (English)
 TODO.md         Current gaps and roadmap
 ```
 
@@ -124,16 +128,19 @@ TODO.md         Current gaps and roadmap
 
 - UDP has no ACK/retransmission, authentication or encryption beyond WPA2.
 - If viewer feedback is lost, the camera’s send interval freezes at its last value (no auto-recovery yet).
-- The viewer button GPIO is TBD; the current GPIO0 setting produces no events on this board.
+- The viewer button wiring is unverified; planned mapping is `KEY_FREEZE=GPIO3`, `KEY_SHUTTER=GPIO0`, `KEY_PREVIEW=GPIO1`. **GPIO0 is the BOOT strap**: holding it at reset enters download mode.
 - Multi-button freeze/shutter/preview, SD capture and image preview are planned, not implemented.
+- GPL-2.0 is selected, but the vendored `esp32-camera` and `esp_jpeg` components are Apache-2.0 (not GPLv2-compatible); review before redistribution.
 - The display’s I2C full refresh (25–33 ms) caps the panel at ~30–33 fps.
 - No OTA, no automated tests.
 
 ## Documentation
 
-- Technical design (Chinese): [`docs/技术文档.md`](docs/技术文档.md)
+- Technical design (English): [`docs/TECHNICAL_DESIGN.md`](docs/TECHNICAL_DESIGN.md)
 - Roadmap and acceptance criteria: [`TODO.md`](TODO.md)
 
 ## License
 
-License: **TBD before public release** (candidate: MIT or Apache-2.0). Until a license is added, the repository is **not** open for reuse or contribution.
+GPL-2.0. See [`LICENSE`](LICENSE).
+
+> Compatibility note: the vendored `esp32-camera` and `esp_jpeg` components are Apache-2.0; Apache-2.0 is not GPLv2-compatible. Review the combined distribution (or use GPL-3.0) before publishing binaries.

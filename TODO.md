@@ -1,6 +1,14 @@
-# Current gaps and roadmap — ESP32-DuoVF
+# Current gaps and roadmap — ESP32-AirCamDuo
 
 Status legend: **Done** / **P0** (needed before an alpha release) / **P1** (robustness and usability) / **P2** (engineering hygiene).
+
+## Decisions (locked for v1.x)
+
+- Keys: `KEY_FREEZE=GPIO3`, `KEY_SHUTTER=GPIO0`, `KEY_PREVIEW=GPIO1` (active low, pull-up, 30 ms debounce).
+- Shutter: capture the current frame directly and save the full JPEG to SD; the viewer stays on that frame and shows `SAVED`; `KEY_FREEZE` returns to video.
+- Preview: last N JPEGs from SD, N=10 default (`APP_PREVIEW_COUNT`); `KEY_PREVIEW` cycles; long `KEY_FREEZE` exits.
+- License: GPL-2.0 (see `LICENSE`); Apache-2.0 component compatibility to review.
+- Note: GPIO0 is the BOOT strapping pin; holding it at reset enters download mode.
 
 ## Done
 
@@ -12,17 +20,18 @@ Status legend: **Done** / **P0** (needed before an alpha release) / **P1** (robu
 - [x] Auto flash: AEC + panel-average fallback, hysteresis and 3 s dwell
 - [x] Hidden SoftAP by default
 - [x] Single-key photo-freeze logic (hardware unverified)
-- [x] English README + Chinese technical design document
+- [x] English README + English technical design document (`docs/TECHNICAL_DESIGN.md`)
+- [x] Design decisions locked: keys GPIO3/0/1, shutter semantics, preview source, GPL-2.0
 
 ## P0 — alpha release
 
 | Item | What | Acceptance | Dependency | Affected docs |
 |---|---|---|---|---|
-| C5 multi-button controls | Separate `KEY_FREEZE`, `KEY_SHUTTER`, `KEY_PREVIEW` on spare C5 GPIOs (avoid strapping/BOOT pins). Define per-key GPIO, active level, debounce, semantics in VIDEO / FROZEN / PREVIEW. Kconfig: `APP_BUTTON_FREEZE_GPIO`, `APP_BUTTON_SHUTTER_GPIO`, `APP_BUTTON_PREVIEW_GPIO`. Camera-side shutter is an **alternative**, not the primary plan. | Each key produces independent events; no double-click gestures; long press only for “force back to video” | Confirm available GPIOs and physical buttons on the viewer board | Technical doc 5.2.6 / 7.2 / 7.5.2 / 7.7 / 11.3; README features |
-| Viewer button pin | Confirm the actual BOOT/IO0 GPIO (current `APP_BUTTON_GPIO=0` produces no events) | Press/release/long-press logs appear; freeze/resume works | Board schematic or multimeter | README limits; technical doc 5.2.6 |
-| Shutter semantics | Decide: save the current frame directly, or freeze first then save; whether video continues during save | Defined behavior in the state machine; user-visible SAVED feedback | P0 multi-button + SD | Technical doc 7.5.2 / 10.6 |
-| SD JPEG capture | SDMMC **1-bit** (CLK14/CMD15/D0 2, keeping GPIO4 flash); write `IMG_%04u.JPG`; NVS counter; increment only after a successful write; dedicated low-priority photo task with a depth-1 queue | Files readable on PC; counter survives reboot; writes do not stall the UDP/display path | SD hardware verification, FAT32 card | Technical doc 10.6; README features/config |
-| Image preview switching | `PREVIEW` / `REVIEW` states; data source: SD photo list (`/photos/last.jpg` over HTTP) or last N frames in RAM; rendering 1bpp + index/filename | Switch live/last photo/list within the defined time; no corruption; return to LIVE | SD capture or RAM ring buffer | Technical doc 7.5.2 / 10.6; README planned |
+| C5 multi-button controls | Implement the decided mapping: `KEY_FREEZE=GPIO3`, `KEY_SHUTTER=GPIO0`, `KEY_PREVIEW=GPIO1` (active low, 30 ms debounce). Kconfig: `APP_BUTTON_FREEZE_GPIO=3`, `APP_BUTTON_SHUTTER_GPIO=0`, `APP_BUTTON_PREVIEW_GPIO=1`. **GPIO0 is the BOOT strap**; verify wiring. | Each key produces independent events; no double-click gestures; long `KEY_FREEZE` only forces video | Confirm wiring and the BOOT pin behaviour | Technical doc 5.2.6 / 7.2 / 7.5.2 / 7.7 / 11.3; README features |
+| Viewer button wiring | Mapping decided (3/0/1); verify each physical key and that GPIO0 does not hold low at reset. Current firmware still uses a single key on GPIO0 and produces no events. | Press/release/long-press logs appear per key; freeze/shutter/preview work | Board schematic or multimeter | README limits; technical doc 5.2.6 |
+| Shutter semantics | **Decided**: capture the current frame directly, save the full JPEG to SD; the viewer stays on that frame and shows `SAVED`; `KEY_FREEZE` returns to video. Implement the state machine and SAVED indication. | Current frame saved as a valid JPEG; viewer stays; SAVED visible; defined return path | P0 multi-button + SD | Technical doc 7.5.2 / 10.6 |
+| SD JPEG capture | SDMMC **1-bit** (CLK14/CMD15/D0 2, keeping GPIO4 flash); write the current frame as `IMG_%04u.JPG`; NVS counter; increment only after a successful write; dedicated low-priority photo task with a depth-1 queue; keep the viewer on the captured frame | Files readable on PC; counter survives reboot; writes do not stall UDP/display; viewer stays on the saved frame | SD hardware verification, FAT32 card | Technical doc 10.6; README features/config |
+| Image preview switching | **Decided**: preview the last N (default 10) JPEGs from SD; `KEY_PREVIEW` cycles; long `KEY_FREEZE` exits. Data source is the SD photo list; the CAM reads/decodes and sends 128×64 over UDP (no HTTP client on the C5 required). | Switch within the defined time; no corruption; return to LIVE | SD capture, `APP_PREVIEW_COUNT` | Technical doc 7.5.2 / 10.6; README planned |
 | Long-run validation | ≥24 h soak, complex scenes, temperature and range; confirm no `CAMERA LOST` after the 32 KB fix | No reboot/leak; fps and heap stable | Two boards + bench | Technical doc 10.4 |
 
 ## P1 — robustness and usability
