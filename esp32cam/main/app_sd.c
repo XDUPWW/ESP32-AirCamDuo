@@ -106,8 +106,10 @@ static void sd_unmount(const char *reason)
     sdmmc_card_t *card = s_card;
     s_card = NULL;
     if (card != NULL) {
+        // The unmount owns the card: it deinits the host and frees the card
+        // struct that esp_vfs_fat_sdmmc_mount() allocated. Freeing it here as
+        // well panicked the board on the first pulled card (tlsf double free).
         esp_vfs_fat_sdcard_unmount(SD_MOUNT_POINT, card);
-        free(card);
     }
     s_fail_streak = 0;
     publish(false, 0, 0);

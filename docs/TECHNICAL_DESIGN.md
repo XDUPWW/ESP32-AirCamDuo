@@ -356,6 +356,7 @@ Driver (esp32-camera/i2c_master/gpio/lwip/esp_wifi)
 - **Why polling**: the AI-Thinker board does not route the card-detect switch to a GPIO, so presence is inferred from the bus.
 - **Insert**: a task mounts `esp_vfs_fat_sdmmc_mount("/sdcard", …)` 6 s after boot, retries every 2 s while nothing answers, and logs one line per transition (`card in: 30424 MB …`).
 - **Remove**: every 1 s `sdmmc_get_status()` (CMD13, no filesystem traffic); two failures in a row unmount and publish `card out (bus timeout)`. Nothing is written, so a pull cannot corrupt anything.
+- **Ownership**: `esp_vfs_fat_sdmmc_mount()` allocates the `sdmmc_card_t` and `esp_vfs_fat_sdcard_unmount()` deinits the host and frees it. The caller must not free the card — doing so panicked the board with a tlsf double free on the first pulled card.
 - **Pins**: 1-bit SDMMC, CLK 14 / CMD 15 / D0 2, 20 MHz. D1 shares GPIO4 with the flash LED, which is why the bus is 1-bit.
 - **Interfaces**: `app_sd_start()`, `app_sd_get(app_sd_state_t*)`; the state also appears in `/status` as `sd: {present, mounts, mb, free_mb}`.
 - **Log noise**: the sdmmc/fatfs drivers log an error per failed attempt, so `sdmmc_req`, `vfs_fat_sdmmc` and `SD_HOST` are muted; `APP_SD_LOG_DEBUG` restores them for bring-up.
@@ -840,6 +841,7 @@ Real chain:
 | E23 | 30 fps buys quality, not more fps | target | 40 → 30 fps | 40 fps, 3 ms idle, q5 | 30 fps, 9–14 ms idle, ladder reaches q3 (jpeg 4.0 → 6.1 KB, encode 17 → 19 ms) | 150 s | the extra margin goes to the ladder, frame rate stays 30 | yes | `APP_UDP_TARGET_FPS=40` |
 | E24 | ladder never probed below the nominal rate | probe condition | `fps >= target` → `fps >= target − 1` | ladder stuck at q12 although 14 ms were idle | climbs 12 → 9 → 7 → 5 → 3 | 120 s | the pacer settles a little under target, so "at target" must mean the deadband floor | yes | old condition |
 | E25 | SD slot init breaks the camera | slot config | partially filled `sdmmc_slot_config_t` (cd = 0) → `SDMMC_SLOT_NO_CD` | `cam_hal: Failed to get frame: timeout` every 4 s, 30 fps unusable | no timeouts, 30.0 fps | 45 s each | `cd = GPIO0` is the camera XCLK; the slot claim stole the clock | yes | restore the zeroed struct |
+| E27 | pulling the card reboots the board | card lifetime | `free(card)` after unmount → unmount owns the card | panic `tlsf_free tlsf.c:630`, reset reason 4, video lost for the whole reboot | no panic; `card out` then `card in` after reinsert | pull + reinsert | double free in the vfs wrapper | yes | restore the extra free |
 | E26 | SD mount competes with the video ramp | mount timing | mount at boot → 6 s delay | 116 sendto ENOMEM retries, 45 dropped frames | 3 retries, 7 drops | boot + 150 s | pbuf pressure during the ramp | yes | `APP_SD_START_DELAY_MS=0` |
 | E22 | auto contrast beats a fixed gain | viewer gain | 110% fixed → 2%/98% percentile stretch | dim scene drawn inside 55/255 of the range | dim 10–126 → 2.1×; bright 19–251 → 1.0× | 150 s | full tonal range reaches the dither | yes | `APP_VIEW_AGC=n` |
 | E17 | I2C overclock raises display ceiling | I2C clock | 400 → 600 → 800 kHz | 400: flush 25 ms, 32.2 fps max | 600: 18 ms, 40.4 fps; 800: 15 ms, 45.1 fps; 0 errors | 18 s each, pacing off | 800 kHz stable on this module; out of spec | yes (800 in sdkconfig; Kconfig default 400) | 400 kHz |
@@ -966,6 +968,7 @@ Quality is second-order for the JPEG steps and first-order for the resampling an
 | Auto contrast amplified noise | a 24-level window was stretched 10× | cap the stretch at 3.0× and widen the window | gain ≤3.0 in logs | always cap an automatic gain |
 | SD slot takes the camera down | `sdmmc_slot_config_t` is not zero-safe: `cd = 0` means GPIO0, the camera XCLK | use `SDMMC_SLOT_NO_CD/NO_WP` and `GPIO_NUM_NC` for unused data lines | no frame timeouts | never leave an unused GPIO field at 0 |
 | Card never mounts, ACMD41 invalid | no card in the slot (the bus floats) | treat it as the normal "absent" state and retry | `card in` appears once a card is inserted | verify presence before debugging the driver |
+| Pulling the card panics the board | caller freed the `sdmmc_card_t` after `esp_vfs_fat_sdcard_unmount()`, which already frees it (`assert failed: tlsf_free … block already marked as free`) | let the unmount own the card | pull/in test, no assert | read who owns an allocation before freeing it |
 | SD mount drops frames | mount during the Wi-Fi/camera boot ramp | 6 s start delay | 45 → 7 drops | serialise allocations away from the start-up window |
 | RTSP not viable | no HW codec; I2C wall | reject | architecture analysis | check hardware first |
 

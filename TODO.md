@@ -28,6 +28,7 @@ Status legend: **Done** / **P0** (needed before an alpha release) / **P1** (robu
 - [x] microSD hot-plug monitor: 1-bit SDMMC, no CD switch, mount on appearance plus a CMD13 presence probe; a 30 GB card mounts at 20 MHz
 - [x] Fix: a partially filled `sdmmc_slot_config_t` left `cd = GPIO0`, which is the camera XCLK — the slot init stole the clock and every frame grab timed out
 - [x] Defer the first SD mount by 6 s: mounting during the boot ramp cost 116 sendto ENOMEM retries and 45 dropped frames
+- [x] Fix: `esp_vfs_fat_sdcard_unmount()` already frees the card and deinits the host; freeing it again panicked the board (`tlsf_free` assert, reset reason 4) the first time a card was pulled
 - [x] I2C clock configurable: 400/600/800 kHz tested (0 errors); 800 kHz flush 15 ms, 45.1 fps display ceiling; Kconfig default 400, this build 800
 - [x] JPEG frame buffer fix (3,840 B → 32 KB) for busy scenes
 - [x] Auto flash: AEC + panel-average fallback, hysteresis and 3 s dwell
