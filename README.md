@@ -36,7 +36,7 @@ flowchart LR
 | Adaptive pacing | **Implemented** | product target 30 fps, deadband 29–31 fps, acceptance ≥29 fps; feed-forward interval = period − measured work, ±1 ms/s trim from the viewer |
 | Auto contrast (AGC) | **Implemented** | per-frame 2%/98% percentile stretch on the viewer, quarter-step EMA, gain capped at 3.0×, replaces the fixed 110% gain |
 | Adaptive sensor quality | **Implemented** | JPEG 12 → 9 → 7 → 5 → 3 while ≥2 ms of frame time is idle and the viewer holds target; a failed probe reverts and doubles the dwell (8 s → 120 s) |
-| microSD hot plug | **Implemented (insert verified)** | 1-bit SDMMC on CLK14/CMD15/D0 2, no card-detect switch, so the monitor mounts on appearance and sends CMD13 every second; mounted a 30 GB card at 20 MHz. Removal path implemented, not yet pulled on hardware |
+| microSD hot plug | **Implemented (insert + removal verified)** | 1-bit SDMMC on CLK14/CMD15/D0 2, no card-detect switch, so the monitor mounts on appearance and sends CMD13 every second; a 30 GB card mounts at 20 MHz, and pulling it mid-stream logs `card out` within a second with the video uninterrupted |
 | Resampling | **Implemented** | 160×120 → 2:1 centre crop → 128×64 area average; bilinear when the source is smaller than the panel |
 | Reassembly | **Implemented** | `frame_id` + receiver-side 64-bit fragment mask; header carries `frag_index`/`frag_count` |
 | Auto flash | **Implemented** | OV2640 AEC + panel-average fallback, 600/250 thresholds, 3 s dwell |
@@ -154,7 +154,7 @@ TODO.md         Current gaps and roadmap
 - GPL-2.0 is selected, but the vendored `esp32-camera` and `esp_jpeg` components are Apache-2.0 (not GPLv2-compatible); review before redistribution.
 - XCLK is fixed at 20 MHz; 40 MHz overclocking is not used because the sensor is not the bottleneck at QQVGA.
 - The I2C overclock is still in use: the display’s full refresh is 25 ms @400 kHz (~32 fps ceiling) and 14–15 ms @800 kHz (~45 fps). 800 kHz is out of SSD1306/C5 spec and panel-dependent (tested stable on this module). 30 fps itself would also fit at 400 kHz, but the overclock leaves room for the quality ladder.
-- microSD: the board has no card-detect switch, so a removal is noticed by a failed CMD13 (two in a row) rather than an interrupt, and nothing writes to the card yet. The card-present path is verified; pulling a card mid-run is not.
+- microSD: the board has no card-detect switch, so a removal is noticed by a failed CMD13 (two in a row) rather than an interrupt, and nothing writes to the card yet. Insert and removal are both verified on the bench (30 GB card, 30.1–30.6 fps across a pull).
 - The auto contrast and the quality ladder are tuned on this bench only; the quality steps are JPEG quality, so their visible effect after 1-bit dithering is second-order compared with the contrast stretch and the resampling.
 - Partial refresh is opt-in (`APP_VIEW_PARTIAL`) but measured slower with dithering (29.5 vs 32.2 fps).
 - No OTA, no automated tests.

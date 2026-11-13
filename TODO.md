@@ -29,6 +29,8 @@ Status legend: **Done** / **P0** (needed before an alpha release) / **P1** (robu
 - [x] Fix: a partially filled `sdmmc_slot_config_t` left `cd = GPIO0`, which is the camera XCLK — the slot init stole the clock and every frame grab timed out
 - [x] Defer the first SD mount by 6 s: mounting during the boot ramp cost 116 sendto ENOMEM retries and 45 dropped frames
 - [x] Fix: `esp_vfs_fat_sdcard_unmount()` already frees the card and deinits the host; freeing it again panicked the board (`tlsf_free` assert, reset reason 4) the first time a card was pulled
+- [x] Hot-plug verified both ways: `card in: 30424 MB` on insert, `card out (bus timeout)` 1 s after a pull, no reboot, video 30.1–30.6 fps across the pull
+- [x] Reject a mount that reports zero capacity: an empty slot passed card init on a floating bus and remounted every 2 s
 - [x] I2C clock configurable: 400/600/800 kHz tested (0 errors); 800 kHz flush 15 ms, 45.1 fps display ceiling; Kconfig default 400, this build 800
 - [x] JPEG frame buffer fix (3,840 B → 32 KB) for busy scenes
 - [x] Auto flash: AEC + panel-average fallback, hysteresis and 3 s dwell
@@ -52,7 +54,6 @@ Status legend: **Done** / **P0** (needed before an alpha release) / **P1** (robu
 
 | Item | What | Acceptance | Dependency | Affected docs |
 |---|---|---|---|---|
-| Hot-plug removal check | Pull the card while the viewer streams; expect `card out (bus timeout)` and a re-mount when it goes back in | One log line each way, video unaffected, `/status` flips | — | Technical doc 8.7 |
 | Feedback-loss recovery | Not needed for the rate any more: the feed-forward term holds it. Still missing: a warning when feedback disappears | Log line after N seconds without feedback; rate unchanged | — | Technical doc 8.5.3 |
 | Quality ladder soak | The ladder has only been observed for 150 s per run | Holds 39–41 fps and a settled step for 30 min, including a busy scene and a light/dark transition | — | Technical doc 8.5.4 |
 | Auto-contrast A/B | Compare `APP_VIEW_AGC=y/n` on the same scene with a photo of the panel | Documented side-by-side, gain per scene | — | Technical doc 8.5.4 |

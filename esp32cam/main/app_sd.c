@@ -90,7 +90,19 @@ static bool sd_mount(void)
 
     uint64_t total = 0;
     uint64_t free_bytes = 0;
-    esp_vfs_fat_info(SD_MOUNT_POINT, &total, &free_bytes);
+    if (esp_vfs_fat_info(SD_MOUNT_POINT, &total, &free_bytes) != ESP_OK || total == 0) {
+        // An empty slot can still pass card init and even mount FAT on a floating
+        // bus, reporting 0 bytes; a real card has capacity. Reject it and stay in
+        // the absent state instead of remounting every 2 s.
+        ESP_LOGD(TAG, "mount reported no capacity, treating the slot as empty");
+        if (!s_complained) {
+            s_complained = true;
+            ESP_LOGI(TAG, "slot empty, retrying every %d ms", SD_RETRY_MS);
+        }
+        esp_vfs_fat_sdcard_unmount(SD_MOUNT_POINT, card);
+        return false;
+    }
+
     s_card = card;
     s_fail_streak = 0;
     s_complained = false;
