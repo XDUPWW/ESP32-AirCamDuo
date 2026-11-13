@@ -8,6 +8,8 @@ ESP32-AirCamDuo streams a 128×64 grayscale luma frame from an ESP32-CAM to an E
 
 **Naming boundary.** `AirCamDuo` = Air (wireless) + Cam (camera) + Duo (dual board); the current transport is grayscale luma. Full-JPEG capture to SD and image preview are planned and do not change the project name.
 
+The camera runs a fixed **20 MHz XCLK**. At QQVGA the sensor can already produce ~50 fps at 20 MHz, and the frame budget is dominated by the camera encode (11–12 ms) and the 25 ms I2C refresh, so 40 MHz overclocking is deliberately not used. The camera’s UDP encode/send task is pinned to core 1; Wi-Fi and the HTTP server stay on core 0; measured 20.2–20.4 fps.
+
 ```mermaid
 flowchart LR
   subgraph CAM["ESP32-CAM (STA, typically 192.168.4.2)"]
@@ -131,6 +133,7 @@ TODO.md         Current gaps and roadmap
 - The viewer button wiring is unverified; planned mapping is `KEY_FREEZE=GPIO3`, `KEY_SHUTTER=GPIO0`, `KEY_PREVIEW=GPIO1`. **GPIO0 is the BOOT strap**: holding it at reset enters download mode.
 - Multi-button freeze/shutter/preview, SD capture and image preview are planned, not implemented.
 - GPL-2.0 is selected, but the vendored `esp32-camera` and `esp_jpeg` components are Apache-2.0 (not GPLv2-compatible); review before redistribution.
+- XCLK is fixed at 20 MHz; 40 MHz overclocking is not used because the sensor is not the bottleneck at QQVGA.
 - The display’s I2C full refresh (25–33 ms) caps the panel at ~30–33 fps.
 - No OTA, no automated tests.
 

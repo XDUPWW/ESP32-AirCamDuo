@@ -16,6 +16,7 @@ Status legend: **Done** / **P0** (needed before an alpha release) / **P1** (robu
 - [x] tjpgd Y-only decode on the camera (encode 11–12 ms)
 - [x] UDP reassembly with `frame_id` + receiver-side 64-bit fragment mask
 - [x] Adaptive send interval from viewer feedback (product target 15–20 fps, deadband 18–20 fps, acceptance ≥18 fps)
+- [x] Dual-core pinning: camera encode/send on core 1, feedback/Wi-Fi/HTTP on core 0; measured 20.2–20.4 fps
 - [x] JPEG frame buffer fix (3,840 B → 32 KB) for busy scenes
 - [x] Auto flash: AEC + panel-average fallback, hysteresis and 3 s dwell
 - [x] Hidden SoftAP by default
@@ -62,3 +63,4 @@ Status legend: **Done** / **P0** (needed before an alpha release) / **P1** (robu
 - **YUV422 raw streaming**: the OV2640 only reaches ~13.5 fps in YUV422 QQVGA with this driver; JPEG capture is faster.
 - **Partial OLED refresh**: dithered frames change most pages, and an I2C glitch can leave a stale page; full refresh is self-healing.
 - **Camera-side shutter on GPIO13**: an alternative only; the primary plan is C5-side multi-button control.
+- **XCLK 40 MHz overclock**: not used; at QQVGA the sensor is not the bottleneck, and the OV2640 spec is 27 MHz.

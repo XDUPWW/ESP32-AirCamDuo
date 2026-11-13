@@ -5,6 +5,7 @@
 #include "camera_pins.h"
 #include "driver/ledc.h"
 #include "esp_log.h"
+#include "sdkconfig.h"
 #include "freertos/FreeRTOS.h"
 #include "freertos/semphr.h"
 

@@ -58,6 +58,19 @@
 | ESP-IDF 6.1 / lwIP | UDP sockets, esp_timer, NVS | no reliable UDP | custom fragmentation + feedback pacing |
 | LiPo/TP4056 (reference) | portable power | boost/charge/ADC needed | current build is USB-powered |
 
+**Resolution / XCLK / PSRAM envelope** (vendor data plus community measurements; this project does not overclock):
+
+| Source size | 20 MHz XCLK (theoretical) | 40 MHz overclock |
+|---|---|---|
+| < HVGA (e.g. CIF 352×288) | ~50 fps | ~100 fps (community, not used) |
+| HVGA–XGA (e.g. SVGA 800×600) | ~25 fps | ~50 fps, unstable |
+| XGA+ (e.g. UXGA 1600×1200) | ~12.5 fps | ~25 fps theoretical; PSRAM-bound ~2–4 fps |
+
+- OV2640 spec is 6–27 MHz; **20 MHz is the fixed default** in this project. 40 MHz needs a 1-bit LEDC duty (already the case) but is unstable at SVGA and above; it is deliberately not used.
+- PSRAM bandwidth is ~20 MB/s. At UXGA a YUV422 round trip is ~7.68 MB/frame → ~2.6 fps; at QQVGA the frame is tiny, so PSRAM is not limiting.
+- Grayscale: raw capture peaks around 32 fps with dual-core; RGB→gray conversion drops to ~12.5 fps. This project avoids that conversion by decoding only Y (tjpgd) and sending a panel-sized gray frame.
+- Conclusion: QQVGA JPEG at 20 MHz is not sensor- or PSRAM-bound. The remaining limits are the CAM encode (11–12 ms) and the 25 ms I2C refresh; overclocking would not raise the current 15–20 fps target.
+
 ## 1.3 Bandwidth and Latency Budget
 
 **Frame bytes**:
@@ -314,7 +327,7 @@ Driver (esp32-camera/i2c_master/gpio/lwip/esp_wifi)
 
 - **Responsibility**: OV2640 init/mode switch; JPEG/RAW config; frame get/return; enable AEC/AGC/AWB gain; self-test.
 - **Interfaces**: `app_cam_init()`, `app_cam_fb_get()/return()`, `app_cam_set_mode()`, `app_cam_luma_from_fb()`, `app_cam_frame_width/height/format()`.
-- **Data**: JPEG QQVGA q12, `jpeg_buffer_size=32 KB`, `fb_count=3`, PSRAM; RAW YUV422 QQVGA, `fb_count=2`.
+- **Data**: JPEG QQVGA q12, `jpeg_buffer_size=32 KB`, `fb_count=3`, PSRAM; RAW YUV422 QQVGA, `fb_count=2`. **XCLK fixed at 20 MHz**; overclocking is not used.
 - **Concurrency/errors**: mode switch lock + stream-user count; init retry twice then mark unavailable.
 - **Trade-off**: 32 KB buffer avoids truncation in busy scenes; RAW is side-channel only.
 
@@ -498,15 +511,17 @@ typedef struct {
 
 ## 7.3 Concurrency
 
-| Node | Task | Priority | Stack | Trigger | Blocks on |
-|---|---|---|---|---|---|
-| CAM | main | 1 | 6,144 | boot | exits |
-| CAM | `cam_udp` | 5 | 6,144 | boot | `fb_get`/`sendto`/delay |
-| CAM | `cam_fb` (feedback) | 4 | 3,072 | boot | `recvfrom` |
-| CAM | `mjpeg` (HTTP) | 5 | 4,096 | browser | `send`/`fb_get` |
-| C5 | main | 1 | 8,192 | boot | `wait_frame`/I2C |
-| C5 | `cam_udp` | 6 | 8,192 | `cam_client_start` | `recvfrom`/`publish` |
-| C5 | `button` | 4 | 3,072 | `app_button_start` | 10 ms delay |
+| Node | Task | Priority | Stack | Core | Trigger | Blocks on |
+|---|---|---|---|---|---|---|
+| CAM | main | 1 | 6,144 | 0 (default) | boot | exits |
+| CAM | `cam_udp` | 5 | 6,144 | **1 (pinned)** | boot | `fb_get`/`sendto`/delay |
+| CAM | `cam_fb` (feedback) | 4 | 3,072 | **0 (pinned)** | boot | `recvfrom` |
+| CAM | `mjpeg` (HTTP) | 5 | 4,096 | unpinned | browser | `send`/`fb_get` |
+| C5 | main | 1 | 8,192 | 0 (single-core) | boot | `wait_frame`/I2C |
+| C5 | `cam_udp` | 6 | 8,192 | 0 (single-core) | `cam_client_start` | `recvfrom`/`publish` |
+| C5 | `button` | 4 | 3,072 | 0 (single-core) | `app_button_start` | 10 ms delay |
+
+Encode/send (`cam_udp`) is pinned to core 1 so the JPEG decode and UDP bursts do not compete with Wi-Fi, lwIP and the HTTP server on core 0; measured 20.2–20.4 fps after pinning, with no regression.
 
 **Priority rationale**:
 
@@ -841,6 +856,7 @@ Real chain:
 | OTA/dual partition | operability | partition/rollback | upgrade test | low |
 | CAM GPIO13 shutter | camera-side key | control protocol | visual/log | medium |
 | Long-run/thermal/range | find hidden defects | test bench | ≥24 h | high |
+| XCLK 40 MHz overclock | none at QQVGA (sensor not bound) | OV2640 spec 27 MHz; unstable at high res | not used | rejected |
 
 ## 8.9 Methodology
 

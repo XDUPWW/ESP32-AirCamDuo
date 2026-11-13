@@ -448,12 +448,14 @@ esp_err_t app_udp_start(void)
 #else
     ESP_LOGI(TAG, "camera in JPEG mode, decoded on the camera");
 #endif
-    if (xTaskCreate(udp_task, "cam_udp", UDP_TASK_STACK, NULL, UDP_TASK_PRIORITY, NULL) != pdPASS) {
+    // Encode/send on core 1; Wi-Fi and the HTTP server stay on core 0.
+    if (xTaskCreatePinnedToCore(udp_task, "cam_udp", UDP_TASK_STACK, NULL, UDP_TASK_PRIORITY,
+                                NULL, 1) != pdPASS) {
         ESP_LOGE(TAG, "cannot start the udp sender");
         return ESP_ERR_NO_MEM;
     }
 #if defined(CONFIG_APP_UDP_ADAPT)
-    if (xTaskCreate(feedback_task, "cam_fb", 3072, NULL, 4, NULL) != pdPASS) {
+    if (xTaskCreatePinnedToCore(feedback_task, "cam_fb", 3072, NULL, 4, NULL, 0) != pdPASS) {
         ESP_LOGE(TAG, "cannot start the feedback listener");
         return ESP_ERR_NO_MEM;
     }
