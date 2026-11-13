@@ -50,6 +50,15 @@ menu "ESP32-C5 camera viewer"
         bool "Button pulls the GPIO low when pressed"
         default y
 
+    config APP_I2C_CLOCK_KHZ
+        int "OLED I2C clock (kHz)"
+        range 100 800
+        default 400
+        help
+            SSD1306 specifies 400 kHz maximum. Values above that are an
+            overclock: stability depends on the module's pull-ups and wiring.
+            Test 600/800 kHz on the actual panel before relying on them.
+
     config APP_VIEW_PARTIAL
         bool "Only refresh changed OLED pages"
         default n

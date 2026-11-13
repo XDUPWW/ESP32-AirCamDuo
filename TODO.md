@@ -18,6 +18,7 @@ Status legend: **Done** / **P0** (needed before an alpha release) / **P1** (robu
 - [x] Adaptive send interval from viewer feedback (product target 15–20 fps, deadband 18–20 fps, acceptance ≥18 fps)
 - [x] Dual-core pinning: camera encode/send on core 1, feedback/Wi-Fi/HTTP on core 0; measured 20.2–20.4 fps
 - [x] Hardened partial OLED refresh behind `APP_VIEW_PARTIAL`; measured 29.5 fps vs 32.2 fps full with dithering, so full refresh stays default
+- [x] I2C clock configurable: 400/600/800 kHz tested (0 errors); 800 kHz flush 15 ms, 45.1 fps display ceiling; Kconfig default 400, this build 800
 - [x] JPEG frame buffer fix (3,840 B → 32 KB) for busy scenes
 - [x] Auto flash: AEC + panel-average fallback, hysteresis and 3 s dwell
 - [x] Hidden SoftAP by default

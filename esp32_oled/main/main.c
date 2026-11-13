@@ -25,7 +25,7 @@ static const char *TAG = "c5view";
 #define PIN_SCL         9
 
 #define I2C_PORT        I2C_NUM_0
-#define I2C_FREQ_HZ     400000
+#define I2C_FREQ_HZ     (CONFIG_APP_I2C_CLOCK_KHZ * 1000)
 
 #define SSD1306_ADDR_A  0x3C
 #define SSD1306_ADDR_B  0x3D

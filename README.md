@@ -8,7 +8,7 @@ ESP32-AirCamDuo streams a 128×64 grayscale luma frame from an ESP32-CAM to an E
 
 **Naming boundary.** `AirCamDuo` = Air (wireless) + Cam (camera) + Duo (dual board); the current transport is grayscale luma. Full-JPEG capture to SD and image preview are planned and do not change the project name.
 
-The camera runs a fixed **20 MHz XCLK**. At QQVGA the sensor can already produce ~50 fps at 20 MHz, and the frame budget is dominated by the camera encode (11–12 ms) and the 25 ms I2C refresh, so 40 MHz overclocking is deliberately not used. The camera’s UDP encode/send task is pinned to core 1; Wi-Fi and the HTTP server stay on core 0; measured 20.2–20.4 fps.
+The camera runs a fixed **20 MHz XCLK**. At QQVGA the sensor can already produce ~50 fps at 20 MHz, and the frame budget is dominated by the camera encode (11–12 ms) and the I2C refresh (25 ms @400 kHz, 15 ms @800 kHz overclock), so 40 MHz XCLK overclocking is deliberately not used. The camera’s UDP encode/send task is pinned to core 1; Wi-Fi and the HTTP server stay on core 0; measured 20.2–20.4 fps.
 
 ```mermaid
 flowchart LR
@@ -49,7 +49,7 @@ flowchart LR
 |---|---|
 | ESP32-CAM (AI-Thinker) | OV2640, 4 MB flash, PSRAM; XCLK **GPIO0**; flash LED **GPIO4**; microSD slot (1-bit planned: CLK14/CMD15/D0 2) |
 | ESP32-C5 dev board | 16 MB flash; SoftAP + UDP receiver + OLED driver |
-| SSD1306 128×64 | I2C, 0x3C, SDA **GPIO8**, SCL **GPIO9**, 400 kHz |
+| SSD1306 128×64 | I2C, 0x3C, SDA **GPIO8**, SCL **GPIO9**, 400 kHz spec; this build 800 kHz overclock (tested stable on this module) |
 | Buttons | planned: `KEY_FREEZE=GPIO3`, `KEY_SHUTTER=GPIO0`, `KEY_PREVIEW=GPIO1`, active low; current firmware has a single GPIO0 button, unverified |
 | Power | USB; LiPo/TP4056 is a future option |
 
@@ -68,7 +68,9 @@ Bench measurements on the current two boards; not a guarantee.
 | Metric | Value |
 |---|---|
 | Displayed fps | 18.5–20.5 (steady) |
-| Max display (pacing off, full refresh) | 32.2 fps (flush 25 ms) |
+| Max display, 400 kHz I2C | 32.2 fps (flush 25 ms) |
+| Max display, 600 kHz I2C (overclock) | 40.4 fps (flush 18 ms) |
+| Max display, 800 kHz I2C (overclock) | 45.1 fps (flush 15 ms) |
 | Max with partial refresh | 29.5 fps (flush 27 ms; dithering changes most pages) |
 | Frame | 128×64 gray8, 8,192 B, 6 UDP fragments |
 | Camera: capture / encode / send | 0 / 11–12 / 11–12 ms |
@@ -107,6 +109,7 @@ cd esp32_oled && idf.py build && idf.py -p COM8 flash monitor
 | Viewer | `APP_BUTTON_PREVIEW_GPIO` (planned) | `1` |
 | Viewer | `APP_PREVIEW_COUNT` (planned) | `10` |
 | Viewer | `APP_VIEW_GAIN` / `APP_VIEW_DITHER` | `110` / `y` |
+| Viewer | `APP_I2C_CLOCK_KHZ` | `400` (this build `800`, overclock) |
 | Viewer | `APP_VIEW_PARTIAL` / `APP_VIEW_FULL_REFRESH_FRAMES` | `n` / `120` |
 | Camera | `APP_WIFI_MODE` | `STA` (joins viewer AP) |
 | Camera | `APP_WIFI_STA_SSID` / `APP_WIFI_STA_PASSWORD` | `ESP32-C5-CAM` / `c5cam12345` |
@@ -137,7 +140,8 @@ TODO.md         Current gaps and roadmap
 - Multi-button freeze/shutter/preview, SD capture and image preview are planned, not implemented.
 - GPL-2.0 is selected, but the vendored `esp32-camera` and `esp_jpeg` components are Apache-2.0 (not GPLv2-compatible); review before redistribution.
 - XCLK is fixed at 20 MHz; 40 MHz overclocking is not used because the sensor is not the bottleneck at QQVGA.
-- The display’s I2C full refresh (25–33 ms) caps the panel at ~32 fps; partial refresh is opt-in (`APP_VIEW_PARTIAL`) but measured slower with dithering (29.5 vs 32.2 fps).
+- The display’s I2C full refresh (25 ms @400 kHz) caps the panel at ~32 fps; 800 kHz overclock cuts it to 15 ms and a ~45 fps ceiling, but is out of SSD1306/C5 spec and panel-dependent (tested stable on this module).
+- Partial refresh is opt-in (`APP_VIEW_PARTIAL`) but measured slower with dithering (29.5 vs 32.2 fps).
 - No OTA, no automated tests.
 
 ## Documentation

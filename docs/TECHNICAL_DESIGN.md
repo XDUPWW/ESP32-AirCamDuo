@@ -53,7 +53,7 @@
 | OV2640 | hardware JPEG; QQVGA/QVGA; YUV422 | YUV422 QQVGA measured ≈**13.5 fps**; JPEG QQVGA sustains ≥20 fps | JPEG capture must be the source; raw YUV is slower |
 | ESP32 (CAM) | dual-core 240 MHz, PSRAM, ROM tjpgd | **no H.264/H.265 hardware encoder** | no video codec; local JPEG→gray only |
 | ESP32-C5 | 2.4/5 GHz, Wi-Fi 6, SoftAP | no video hardware decoder; ESP32 only sees 2.4 GHz | AP + UDP receive + display |
-| SSD1306 | 128×64 mono, I2C 400 kHz | full refresh 1,024 B takes **25–33 ms → ~30–33 fps ceiling** | display is a hard wall |
+| SSD1306 | 128×64 mono, I2C 400 kHz (spec) | full refresh 1,024 B: **25–33 ms @400 kHz**, 18 ms @600 kHz, 15 ms @800 kHz (overclock, tested) | display is the wall; overclock raises the ceiling to ~45 fps |
 | tjpgd R0.03 | `JD_FORMAT=2` Y-only; 1/2, 1/4, 1/8 scale | needs a vendored copy/config | CAM grayscale decode 11–12 ms |
 | ESP-IDF 6.1 / lwIP | UDP sockets, esp_timer, NVS | no reliable UDP | custom fragmentation + feedback pacing |
 | LiPo/TP4056 (reference) | portable power | boost/charge/ADC needed | current build is USB-powered |
@@ -69,7 +69,7 @@
 - OV2640 spec is 6–27 MHz; **20 MHz is the fixed default** in this project. 40 MHz needs a 1-bit LEDC duty (already the case) but is unstable at SVGA and above; it is deliberately not used.
 - PSRAM bandwidth is ~20 MB/s. At UXGA a YUV422 round trip is ~7.68 MB/frame → ~2.6 fps; at QQVGA the frame is tiny, so PSRAM is not limiting.
 - Grayscale: raw capture peaks around 32 fps with dual-core; RGB→gray conversion drops to ~12.5 fps. This project avoids that conversion by decoding only Y (tjpgd) and sending a panel-sized gray frame.
-- Conclusion: QQVGA JPEG at 20 MHz is not sensor- or PSRAM-bound. The remaining limits are the CAM encode (11–12 ms) and the 25 ms I2C refresh; overclocking would not raise the current 15–20 fps target.
+- Conclusion: QQVGA JPEG at 20 MHz is not sensor- or PSRAM-bound. The remaining limits are the CAM encode (11–12 ms) and the I2C refresh (25 ms @400 kHz; 14–15 ms @800 kHz overclock). The I2C overclock raises the display ceiling to ~45 fps, but the shipped 18–20 fps deadband still chooses 20 fps.
 
 ## 1.3 Bandwidth and Latency Budget
 
@@ -96,7 +96,7 @@
 | Air (8.7 KB at 72 Mbps) | ≈1 ms |
 | C5 reassembly + copy | <1 ms |
 | C5 render | 5 ms |
-| C5 flush | 25 ms |
+| C5 flush | 25 ms @400 kHz; 14–15 ms @800 kHz |
 | Total (excluding queuing) | **≈55–60 ms** |
 
 → **Encoding and display are the bottlenecks; the air is not.** This explains later decisions: raw YUV is slower, RTSP has no benefit, partial refresh saves little.
@@ -156,7 +156,7 @@
 | 2 | FPS evolution: HTTP 1.4–1.9 → TCP stream 1–3 → decoupled+full refresh 3.8–7.2 (E03/E06/E07) → UDP 12.4–12.7 → adaptive 16.4–16.9 → tjpgd gray 18.5–20.5 fps (see 8.6) | 5-second windows |
 | 3 | Steady state: send errors=0, drops=0; one transient ENOMEM observed | CAM/C5 logs |
 | 4 | Root cause of "busy scene disconnects": JPEG buffer only 160×120/5 = 3,840 B; fixed to 32 KB | `app_camera.c`, `cam_hal.c` |
-| 5 | tjpgd Y-only cut encode from 24 ms to 11–12 ms; the I2C 25 ms refresh is the next hard wall | `tjpgd_gray/`, bench |
+| 5 | tjpgd Y-only cut encode from 24 ms to 11–12 ms; the I2C refresh is the next wall (25 ms @400 kHz; 15 ms @800 kHz overclock → ~45 fps ceiling) | `tjpgd_gray/`, bench |
 | 6 | Auto flash uses AEC plus panel average, 600/250, 3 s dwell; measured on at avg 19, off at aec 168/avg 121 | 5-minute CAM log |
 | 7 | AP is hidden by default; the camera joins by SSID | Kconfig, scan |
 | 8 | Open: viewer button GPIO (GPIO0 produces no events), camera GPIO0 is XCLK | logs, pin table |
@@ -389,7 +389,7 @@ Driver (esp32-camera/i2c_master/gpio/lwip/esp_wifi)
 - **Responsibility**: I2C init, framebuffer, pixel/rect/text, full refresh.
 - **Interfaces**: `ssd1306_init/flush/clear/pixel/fill_rect/text`.
 - **Metric**: full 1,024 B at 400 kHz measured 25–33 ms.
-- **Trade-off**: full refresh is the default and self-healing. `ssd1306_flush_changed()` is available behind `APP_VIEW_PARTIAL` (default n): at max pacing it measured **29.5 fps vs 32.2 fps** for full refresh because dithering changes almost every page; a full refresh every N frames and after any I2C error keeps it safe.
+- **Trade-off**: full refresh is the default and self-healing. `ssd1306_flush_changed()` is available behind `APP_VIEW_PARTIAL` (default n): at max pacing it measured **29.5 fps vs 32.2 fps** for full refresh because dithering changes almost every page; a full refresh every N frames and after any I2C error keeps it safe. The I2C clock is configurable (`APP_I2C_CLOCK_KHZ`, default 400): 600/800 kHz were tested on this module with 0 errors (800 kHz: flush 15 ms, 45.1 fps max); above 400 kHz is an overclock and out of spec.
 
 ### 5.2.5 `main`
 
@@ -683,6 +683,7 @@ The viewer stays on the captured frame; `KEY_FREEZE` returns to live video.
 | C5 `APP_BUTTON_SHUTTER_GPIO` (planned) | same | `app_button` | **0** |
 | C5 `APP_BUTTON_PREVIEW_GPIO` (planned) | same | `app_button` | **1** |
 | C5 `APP_PREVIEW_COUNT` (planned) | same | preview | **10** |
+| C5 `APP_I2C_CLOCK_KHZ` | same | `ssd1306_init` / `oled_open` | 400 (this build 800) |
 | C5 `APP_VIEW_PARTIAL` | same | `ssd1306_flush_changed` | n |
 | C5 `APP_VIEW_FULL_REFRESH_FRAMES` | same | full-refresh cadence | 120 |
 | C5 `APP_VIEW_*` | same | `image_view.c` | 110%, dither y |
@@ -771,6 +772,7 @@ Real chain:
 | E14 | flash criterion wrong | criterion | avg → AEC+avg fallback | always on/off | on avg 19, off aec 168/avg 121 | 5 min | works | yes | thresholds |
 | E15 | busy scene disconnects | buffer | JPEG 3,840 B → 32 KB | drops/LOST | 5 min stable | 5 min | root cause fixed | yes | auto |
 | E16 | partial refresh raises fps | refresh | changed pages + full every 120 | full: 32.2 fps (flush 25 ms) | partial: 29.0–29.5 fps (flush 27 ms) | 20 s, pacing off | dithering changes most pages; no gain | no (opt-in) | full refresh |
+| E17 | I2C overclock raises display ceiling | I2C clock | 400 → 600 → 800 kHz | 400: flush 25 ms, 32.2 fps max | 600: 18 ms, 40.4 fps; 800: 15 ms, 45.1 fps; 0 errors | 18 s each, pacing off | 800 kHz stable on this module; out of spec | yes (800 in sdkconfig; Kconfig default 400) | 400 kHz |
 
 ## 8.4 Architecture Decisions
 
@@ -782,6 +784,7 @@ Real chain:
 | Full → 1/2 decode | encode 37 ms | less decode | 22 ms | softer image | adopted |
 | esp_jpeg → tjpgd Y | chroma/RGB conversion | decode only Y | 11–12 ms | vendored tjpgd | adopted |
 | Full refresh default, partial opt-in | partial skipped few pages | self-healing | full 32.2 fps vs partial 29.5 fps at max | dithered pages change; I2C glitch risk | full default; partial opt-in |
+| I2C 400 → 800 kHz overclock | flush 25 ms | raise display ceiling | 45.1 fps max (flush 15 ms) | out of SSD1306/C5 spec; panel-dependent | adopted for this module; Kconfig default 400 |
 | YUV422 raw | no decode | fastest | encode 2 ms but capture 74 ms (~13.5 fps) | lower fps | rejected |
 | RTSP+H.264/265 | bitrate/compat | standard | no HW codec; I2C 30 fps wall | complexity/latency | rejected |
 
@@ -854,6 +857,7 @@ Real chain:
 | UDP NACK/FEC | fewer drops | bandwidth/complexity | packet-loss injection | medium |
 | 4bpp/RLE | half bytes, 25–30 fps | C5 decompress/quality | same scene | medium |
 | Hardened partial refresh | implemented behind `APP_VIEW_PARTIAL` | measured slower with dithering (29.5 vs 32.2 fps) | 20 s max test | opt-in only |
+| I2C 1 MHz | further flush reduction | out of spec; host/panel may reject | not tested | low |
 | AP channel auto-scan | interference resilience | +1–2 s boot | multi-channel | low |
 | Feedback timeout recovery | recover after feedback loss | avoid overspeed | cut feedback | medium |
 | OTA/dual partition | operability | partition/rollback | upgrade test | low |
