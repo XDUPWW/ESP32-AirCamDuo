@@ -46,6 +46,13 @@ typedef struct __attribute__((packed)) {
 #define INTERVAL_MIN_MS 0
 #define INTERVAL_MAX_MS 120
 
+// Pacing target. The interval is feed-forward (period - measured work) with a
+// small trim from the viewer's own fps, so it converges in one window instead
+// of walking 5 ms per second.
+#define TARGET_FPS      CONFIG_APP_UDP_TARGET_FPS
+#define PERIOD_MS       (1000 / CONFIG_APP_UDP_TARGET_FPS)
+#define TRIM_LIMIT_MS   8
+
 // Sent by the viewer every second so the camera can pace itself.
 typedef struct __attribute__((packed)) {
     uint16_t magic;
@@ -55,6 +62,19 @@ typedef struct __attribute__((packed)) {
 } cam_feedback_t;
 
 static volatile int s_interval_ms = CONFIG_APP_UDP_INTERVAL_MS;
+static volatile int s_ff_ms = CONFIG_APP_UDP_INTERVAL_MS;  // feed-forward part
+static volatile int s_trim_ms;                             // fps-trim part
+
+static int current_interval_ms(void)
+{
+    int interval = s_ff_ms + s_trim_ms;
+    if (interval < INTERVAL_MIN_MS) {
+        interval = INTERVAL_MIN_MS;
+    } else if (interval > INTERVAL_MAX_MS) {
+        interval = INTERVAL_MAX_MS;
+    }
+    return interval;
+}
 
 static uint8_t *s_gray;  // JPEG decode target (8-bit luma, descaled)
 static size_t s_gray_cap;
@@ -80,7 +100,13 @@ static void *psram_alloc(size_t bytes)
 // Centre-crops the source to the panel's 2:1 aspect ratio and writes one luma
 // sample per panel pixel. Sampling straight out of the decoded bitstream avoids
 // a full-size grey intermediate, and only 8192 panel pixels are touched.
-static void sample_panel_from_gray(const uint8_t *gray, int width, int height)
+//
+// tjpgd halves QQVGA, so the usual source is 80x60 and the 2:1 crop leaves 80x40
+// for 128x64: a 1.6x enlargement, which nearest-neighbour renders as 1-2 pixel
+// blocks. The enlargement interpolates bilinearly instead. A bigger sensor mode
+// (APP_JPEG_QVGA decodes to 160x120, cropping to 160x80) lands on the other side
+// of 1:1, and there each panel pixel averages the source rectangle behind it.
+static void sample_panel(const uint8_t *src, int width, int height, int stride, int pixel_bytes)
 {
     int crop_w = width;
     int crop_h = height;
@@ -94,13 +120,57 @@ static void sample_panel_from_gray(const uint8_t *gray, int width, int height)
         y0 = (height - crop_h) / 2;
     }
 
+    if (crop_w >= PANEL_W && crop_h >= PANEL_H) {
+        for (int y = 0; y < PANEL_H; y++) {
+            const int sy0 = y0 + (y * crop_h) / PANEL_H;
+            int sy1 = y0 + ((y + 1) * crop_h) / PANEL_H;
+            if (sy1 <= sy0) {
+                sy1 = sy0 + 1;
+            }
+            uint8_t *dst = s_panel + (size_t)y * PANEL_W;
+            for (int x = 0; x < PANEL_W; x++) {
+                const int sx0 = x0 + (x * crop_w) / PANEL_W;
+                int sx1 = x0 + ((x + 1) * crop_w) / PANEL_W;
+                if (sx1 <= sx0) {
+                    sx1 = sx0 + 1;
+                }
+                uint32_t sum = 0;
+                int count = 0;
+                for (int sy = sy0; sy < sy1; sy++) {
+                    const uint8_t *row = src + (size_t)sy * stride;
+                    for (int sx = sx0; sx < sx1; sx++) {
+                        sum += row[sx * pixel_bytes];
+                        count++;
+                    }
+                }
+                dst[x] = (uint8_t)(sum / (uint32_t)count);
+            }
+        }
+        return;
+    }
+
+    // Source coordinates in 16.16 fixed point, sampled at pixel centres so the
+    // enlargement stays centred instead of drifting half a pixel.
+    const int32_t step_x = ((int32_t)crop_w << 16) / PANEL_W;
+    const int32_t step_y = ((int32_t)crop_h << 16) / PANEL_H;
     for (int y = 0; y < PANEL_H; y++) {
-        const int sy = y0 + (y * crop_h) / PANEL_H;
-        const uint8_t *row = gray + (size_t)sy * width;
+        const int32_t fy = (int32_t)y0 * 65536 + y * step_y + step_y / 2;
+        const int sy = fy >> 16;
+        const int wy = (fy >> 8) & 0xFF;
+        const uint8_t *row0 = src + (size_t)(sy < height ? sy : height - 1) * stride;
+        const uint8_t *row1 = src + (size_t)(sy + 1 < height ? sy + 1 : height - 1) * stride;
         uint8_t *dst = s_panel + (size_t)y * PANEL_W;
         for (int x = 0; x < PANEL_W; x++) {
-            const int sx = x0 + (x * crop_w) / PANEL_W;
-            dst[x] = row[sx];
+            const int32_t fx = (int32_t)x0 * 65536 + x * step_x + step_x / 2;
+            int sx = fx >> 16;
+            if (sx >= width) {
+                sx = width - 1;
+            }
+            const int wx = (fx >> 8) & 0xFF;
+            const int sx1 = sx + 1 < width ? sx + 1 : width - 1;
+            const int top = row0[sx * pixel_bytes] * (256 - wx) + row0[sx1 * pixel_bytes] * wx;
+            const int bot = row1[sx * pixel_bytes] * (256 - wx) + row1[sx1 * pixel_bytes] * wx;
+            dst[x] = (uint8_t)((top * (256 - wy) + bot * wy) >> 16);
         }
     }
 }
@@ -137,8 +207,10 @@ static void update_flash(void)
 
 static bool jpeg_to_panel(const uint8_t *jpeg, size_t len)
 {
-    // 160x120 is the largest descaled output (QVGA at 1/2); QQVGA gives 80x60.
-    const size_t need = 160 * 120;
+    // The full sensor frame is the worst case: tjpgd's cost sits in the entropy
+    // decode and IDCT, not in how many pixels it writes out, so decoding at full
+    // size costs about 3 ms more than half size. Bytes are cheap in PSRAM.
+    const size_t need = (size_t)app_cam_frame_width() * (size_t)app_cam_frame_height();
     if (s_gray_cap < need) {
         uint8_t *grown = psram_alloc(need);
         if (grown == NULL) {
@@ -151,10 +223,11 @@ static bool jpeg_to_panel(const uint8_t *jpeg, size_t len)
 
     int width = 0;
     int height = 0;
-    if (tjpgd_gray_decode(jpeg, len, s_gray, s_gray_cap, 1, &width, &height) != ESP_OK) {
+    if (tjpgd_gray_decode(jpeg, len, s_gray, s_gray_cap, CONFIG_APP_UDP_GRAY_SCALE, &width,
+                          &height) != ESP_OK) {
         return false;
     }
-    sample_panel_from_gray(s_gray, width, height);
+    sample_panel(s_gray, width, height, width, 1);
     return true;
 }
 
@@ -167,30 +240,7 @@ static bool raw_to_panel(const camera_fb_t *fb)
         return false;
     }
 
-    const int width = fb->width;
-    const int height = fb->height;
-    int crop_w = width;
-    int crop_h = height;
-    int x0 = 0;
-    int y0 = 0;
-    if (width * PANEL_H > height * PANEL_W) {
-        crop_w = (height * PANEL_W + PANEL_H / 2) / PANEL_H;
-        x0 = (width - crop_w) / 2;
-    } else {
-        crop_h = (width * PANEL_H + PANEL_W / 2) / PANEL_W;
-        y0 = (height - crop_h) / 2;
-    }
-
-    const uint8_t *src = fb->buf;
-    for (int y = 0; y < PANEL_H; y++) {
-        const int sy = y0 + (y * crop_h) / PANEL_H;
-        const uint8_t *row = src + (size_t)sy * width * 2;
-        uint8_t *dst = s_panel + (size_t)y * PANEL_W;
-        for (int x = 0; x < PANEL_W; x++) {
-            const int sx = x0 + (x * crop_w) / PANEL_W;
-            dst[x] = row[sx * 2];
-        }
-    }
+    sample_panel(fb->buf, fb->width, fb->height, fb->width * 2, 2);
     return true;
 }
 
@@ -315,9 +365,6 @@ static void udp_task(void *arg)
                 }
                 break;
             }
-            if (i + 1 < frags) {
-                vTaskDelay(pdMS_TO_TICKS(1));
-            }
         }
         const int64_t t3 = esp_timer_get_time();
         frame_id++;
@@ -329,26 +376,39 @@ static void udp_task(void *arg)
         window_frames++;
         const int64_t now = esp_timer_get_time();
         if (now - window_start >= 5000000) {
+            const float avg_cap = cap_us / 1000.0f / window_frames;
+            const float avg_enc = enc_us / 1000.0f / window_frames;
+            const float avg_send = send_us / 1000.0f / window_frames;
+            // Feed-forward: whatever the pipeline did not use of the frame
+            // period is the sleep. The viewer's fps only trims the remainder.
+            int ff = PERIOD_MS - (int)(avg_cap + avg_enc + avg_send + 0.5f);
+            if (ff < INTERVAL_MIN_MS) {
+                ff = INTERVAL_MIN_MS;
+            } else if (ff > INTERVAL_MAX_MS) {
+                ff = INTERVAL_MAX_MS;
+            }
+            s_ff_ms = ff;
+            s_interval_ms = current_interval_ms();
             wifi_ap_record_t ap = { 0 };
             if (esp_wifi_sta_get_ap_info(&ap) == ESP_OK) {
-                ESP_LOGI(TAG, "%u frames, %.1f fps, %u errors, interval %d ms, "
+                ESP_LOGI(TAG, "%u frames, %.1f fps, %u errors, interval %d ms "
+                         "(feed-forward %d, trim %d), "
                          "capture %.0f ms, encode %.0f ms, send %.0f ms, "
                          "jpeg %u/%u/%u B, flash %d aec %d gain %d avg %d, "
                          "rssi %d dBm, ch %d, %s",
                          frames,
                          window_frames * 1e6f / (now - window_start), errors, s_interval_ms,
-                         cap_us / 1000.0f / window_frames, enc_us / 1000.0f / window_frames,
-                         send_us / 1000.0f / window_frames,
+                         s_ff_ms, s_trim_ms, avg_cap, avg_enc, avg_send,
                          window_frames ? jpeg_min : 0,
                          window_frames ? jpeg_sum / window_frames : 0, jpeg_max,
                          s_flash_on, s_aec_value, s_agc_gain, s_last_avg, ap.rssi, ap.primary,
                          ap.second == WIFI_SECOND_CHAN_NONE ? "20MHz" : "40MHz");
             } else {
-                ESP_LOGI(TAG, "%u frames, %.1f fps, %u errors, interval %d ms, "
+                ESP_LOGI(TAG, "%u frames, %.1f fps, %u errors, interval %d ms "
+                         "(feed-forward %d, trim %d), "
                          "capture %.0f ms, encode %.0f ms, send %.0f ms", frames,
                          window_frames * 1e6f / (now - window_start), errors, s_interval_ms,
-                         cap_us / 1000.0f / window_frames, enc_us / 1000.0f / window_frames,
-                         send_us / 1000.0f / window_frames);
+                         s_ff_ms, s_trim_ms, avg_cap, avg_enc, avg_send);
             }
             window_frames = 0;
             cap_us = 0;
@@ -360,14 +420,109 @@ static void udp_task(void *arg)
             window_start = now;
         }
 
-        if (s_interval_ms > 0) {
-            vTaskDelay(pdMS_TO_TICKS(s_interval_ms));
+        const int interval_ms = current_interval_ms();
+        if (interval_ms > 0) {
+            vTaskDelay(pdMS_TO_TICKS(interval_ms));
         }
     }
 }
 
-// Listens for the viewer's rate report and moves the send interval so the
-// viewer stays in its 14-18 fps window without building a lag queue.
+// Spends idle frame time on sensor JPEG quality. The pacing loop already knows
+// how much of the frame period it is not using (s_ff_ms); while that slack is at
+// least two milliseconds and the viewer is on target, the quality steps up. A
+// probe that drops the viewer below target is reverted and the next probe waits
+// twice as long, so the loop settles instead of hunting.
+#if defined(CONFIG_APP_UDP_AUTO_QUALITY)
+static const uint8_t k_quality_steps[] = { 16, 12, 9, 7, 5 };
+#define QUALITY_STEP_COUNT ((int)(sizeof(k_quality_steps) / sizeof(k_quality_steps[0])))
+#define QUALITY_START_STEP 1
+#define QUALITY_SETTLE_US  (3 * 1000 * 1000)
+#define QUALITY_DWELL_US   (8 * 1000 * 1000)
+#define QUALITY_DWELL_MAX  (120 * 1000 * 1000)
+
+static int s_quality_step = QUALITY_START_STEP;
+static int s_quality_good = QUALITY_START_STEP;
+static bool s_quality_probing;
+static int64_t s_quality_changed_us;
+static int64_t s_quality_dwell_us = QUALITY_DWELL_US;
+static int s_quality_low_streak;
+
+static void quality_apply(sensor_t *sensor, int step)
+{
+    if (sensor == NULL || sensor->set_quality == NULL) {
+        return;
+    }
+    sensor->set_quality(sensor, k_quality_steps[step]);
+}
+
+static void quality_track(sensor_t *sensor, uint16_t fps_x10)
+{
+    // Before the viewer's first report there is no measurement to react to.
+    if (fps_x10 == 0) {
+        return;
+    }
+    const int64_t now = esp_timer_get_time();
+    const int lower = (TARGET_FPS - 1) * 10;
+
+    if (s_quality_probing && now - s_quality_changed_us >= QUALITY_SETTLE_US) {
+        if (fps_x10 < lower) {
+            ESP_LOGI(TAG, "quality %d -> %d (probe cost too much, %u.%u fps), dwell %lld s",
+                     k_quality_steps[s_quality_step], k_quality_steps[s_quality_good],
+                     fps_x10 / 10, fps_x10 % 10, (long long)(s_quality_dwell_us / 2000000));
+            s_quality_step = s_quality_good;
+            quality_apply(sensor, s_quality_step);
+            s_quality_dwell_us *= 2;
+            if (s_quality_dwell_us > QUALITY_DWELL_MAX) {
+                s_quality_dwell_us = QUALITY_DWELL_MAX;
+            }
+        } else {
+            ESP_LOGI(TAG, "quality -> %d accepted at %u.%u fps", k_quality_steps[s_quality_step],
+                     fps_x10 / 10, fps_x10 % 10);
+            s_quality_good = s_quality_step;
+            s_quality_dwell_us = QUALITY_DWELL_US;
+        }
+        s_quality_changed_us = now;
+        s_quality_probing = false;
+        return;
+    }
+
+    // A busy scene can lengthen the encode on its own; give quality back after
+    // two consecutive low seconds rather than one, so a single hiccup does not
+    // start the ladder over.
+    if (!s_quality_probing && s_quality_step > 0) {
+        if (fps_x10 < (TARGET_FPS - 3) * 10) {
+            if (s_quality_low_streak < 10) {
+                s_quality_low_streak++;
+            }
+        } else {
+            s_quality_low_streak = 0;
+        }
+        if (s_quality_low_streak >= 2) {
+            s_quality_low_streak = 0;
+            s_quality_step--;
+            s_quality_good = s_quality_step;
+            quality_apply(sensor, s_quality_step);
+            s_quality_changed_us = now;
+            ESP_LOGW(TAG, "quality -> %d (%u.%u fps below target)",
+                     k_quality_steps[s_quality_step], fps_x10 / 10, fps_x10 % 10);
+            return;
+        }
+    }
+
+    if (!s_quality_probing && s_quality_step + 1 < QUALITY_STEP_COUNT &&
+        now - s_quality_changed_us >= s_quality_dwell_us && s_ff_ms >= 2 && fps_x10 >= TARGET_FPS * 10) {
+        s_quality_step++;
+        s_quality_probing = true;
+        s_quality_changed_us = now;
+        quality_apply(sensor, s_quality_step);
+        ESP_LOGI(TAG, "quality -> %d (probing, %d ms idle)", k_quality_steps[s_quality_step],
+                 s_ff_ms);
+    }
+}
+#endif
+
+// Listens for the viewer's rate report and trims the send interval so the viewer
+// holds the target fps without building a lag queue.
 static void feedback_task(void *arg)
 {
     (void)arg;
@@ -400,24 +555,32 @@ static void feedback_task(void *arg)
             continue;
         }
 
-        int interval = s_interval_ms;
+        // Trim only: the pacing loop already sleeps for period - work, so this
+        // corrects what the work measurement cannot see (tick rounding, the
+        // viewer's own render time).
+        int trim = s_trim_ms;
         if (feedback.drops > 2) {
-            interval += 5;
-        } else if (feedback.fps_x10 < 180) {
-            interval -= 5;
-        } else if (feedback.fps_x10 > 210) {
-            interval += 5;
+            trim += 2;
+        } else if (feedback.fps_x10 < (TARGET_FPS - 1) * 10) {
+            trim -= 1;
+        } else if (feedback.fps_x10 > (TARGET_FPS + 1) * 10) {
+            trim += 1;
         }
-        if (interval < INTERVAL_MIN_MS) {
-            interval = INTERVAL_MIN_MS;
-        } else if (interval > INTERVAL_MAX_MS) {
-            interval = INTERVAL_MAX_MS;
+        if (trim < -TRIM_LIMIT_MS) {
+            trim = -TRIM_LIMIT_MS;
+        } else if (trim > TRIM_LIMIT_MS) {
+            trim = TRIM_LIMIT_MS;
         }
-        if (interval != s_interval_ms) {
-            ESP_LOGI(TAG, "viewer %u.%u fps, %u drops -> interval %d ms",
-                     feedback.fps_x10 / 10, feedback.fps_x10 % 10, feedback.drops, interval);
+        if (trim != s_trim_ms) {
+            ESP_LOGI(TAG, "viewer %u.%u fps, %u drops -> trim %d ms", feedback.fps_x10 / 10,
+                     feedback.fps_x10 % 10, feedback.drops, trim);
         }
-        s_interval_ms = interval;
+        s_trim_ms = trim;
+        s_interval_ms = current_interval_ms();
+
+#if defined(CONFIG_APP_UDP_AUTO_QUALITY)
+        quality_track(s_sensor, feedback.fps_x10);
+#endif
     }
 }
 

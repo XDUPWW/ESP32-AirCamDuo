@@ -292,11 +292,16 @@ void app_main(void)
             const float avg_grab = frames_since_log ? grab_us_sum / 1000.0f / frames_since_log : 0;
             const float avg_render = frames_since_log ? render_us_sum / 1000.0f / frames_since_log : 0;
             const float avg_flush = frames_since_log ? flush_us_sum / 1000.0f / frames_since_log : 0;
+            int agc_lo = 0;
+            int agc_hi = 0;
+            int agc_gain = 0;
+            const bool have_agc = image_view_agc_state(&agc_lo, &agc_hi, &agc_gain);
             ESP_LOGI(TAG, "%lu frames, %.1f fps, fetch %.0f ms, render %.0f ms, flush %.0f ms, "
-                     "%dx%d %s, timeouts %lu, errors %lu, cam rssi %d, heap %lu", frames, fps,
-                     avg_grab, avg_render, avg_flush, frame.width, frame.height,
-                     frame.from_jpeg ? "jpeg" : "gray8", timeouts_since_log, errors,
-                     app_wifi_ap_sta_rssi(), (unsigned long)esp_get_free_heap_size());
+                     "%dx%d %s, timeouts %lu, errors %lu, agc %s%d-%d x%d.%d, cam rssi %d, "
+                     "heap %lu", frames, fps, avg_grab, avg_render, avg_flush, frame.width,
+                     frame.height, frame.from_jpeg ? "jpeg" : "gray8", timeouts_since_log,
+                     errors, have_agc ? "" : "off ", agc_lo, agc_hi, agc_gain / 10,
+                     agc_gain % 10, app_wifi_ap_sta_rssi(), (unsigned long)esp_get_free_heap_size());
             last_log = now;
             frames_since_log = 0;
             grab_us_sum = 0;

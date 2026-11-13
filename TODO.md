@@ -12,12 +12,18 @@ Status legend: **Done** / **P0** (needed before an alpha release) / **P1** (robu
 
 ## Done
 
-- [x] UDP gray8 link: 128×64, 6 fragments, 18.5–20.5 fps measured
-- [x] tjpgd Y-only decode on the camera (encode 11–12 ms)
+- [x] UDP gray8 link: 128×64, 6 fragments, 39.9–40.2 fps measured
+- [x] tjpgd Y-only decode on the camera (encode 17 ms at full 160×120 luma)
 - [x] UDP reassembly with `frame_id` + receiver-side 64-bit fragment mask
-- [x] Adaptive send interval from viewer feedback (product target 15–20 fps, deadband 18–20 fps, acceptance ≥18 fps)
+- [x] Adaptive send interval from viewer feedback (first version: product target 15–20 fps, deadband 18–20 fps, acceptance ≥18 fps; superseded by the 40 fps feed-forward pacer below)
 - [x] Dual-core pinning: camera encode/send on core 1, feedback/Wi-Fi/HTTP on core 0; measured 20.2–20.4 fps
 - [x] Hardened partial OLED refresh behind `APP_VIEW_PARTIAL`; measured 29.5 fps vs 32.2 fps full with dithering, so full refresh stays default
+- [x] 40 fps target: feed-forward interval (period − measured work) plus a ±1 ms/s trim; 39.9–40.2 fps measured over 150 s
+- [x] Removed the 1 ms inter-fragment delay: send 12 → 4 ms and 38.7 → 40.0 fps, with no change in drop rate (drop cost was air-level)
+- [x] Full-size luma decode (tjpgd scale 0): 3 ms more encode, 40 fps still held, 4× the samples behind the 128×64 panel
+- [x] Resampling: 2:1 centre crop then area average (bilinear when the source is under panel size) instead of nearest neighbour
+- [x] Viewer auto contrast: per-frame 2%/98% percentile stretch, quarter-step EMA, gain capped at 3.0×
+- [x] Adaptive sensor JPEG quality ladder driven by measured idle frame time, with revert and dwell backoff
 - [x] I2C clock configurable: 400/600/800 kHz tested (0 errors); 800 kHz flush 15 ms, 45.1 fps display ceiling; Kconfig default 400, this build 800
 - [x] JPEG frame buffer fix (3,840 B → 32 KB) for busy scenes
 - [x] Auto flash: AEC + panel-average fallback, hysteresis and 3 s dwell
@@ -41,7 +47,9 @@ Status legend: **Done** / **P0** (needed before an alpha release) / **P1** (robu
 
 | Item | What | Acceptance | Dependency | Affected docs |
 |---|---|---|---|---|
-| Feedback-loss recovery | If no feedback for N seconds, gradually raise the rate or reset the interval | Recovers within N seconds; no runaway | — | Technical doc 8.5.3 |
+| Feedback-loss recovery | Not needed for the rate any more: the feed-forward term holds it. Still missing: a warning when feedback disappears | Log line after N seconds without feedback; rate unchanged | — | Technical doc 8.5.3 |
+| Quality ladder soak | The ladder has only been observed for 150 s per run | Holds 39–41 fps and a settled step for 30 min, including a busy scene and a light/dark transition | — | Technical doc 8.5.4 |
+| Auto-contrast A/B | Compare `APP_VIEW_AGC=y/n` on the same scene with a photo of the panel | Documented side-by-side, gain per scene | — | Technical doc 8.5.4 |
 | Fragment NACK / FEC | Recover a missing fragment for larger frames or worse links | Lower drop rate at fixed fps | Protocol extension | Technical doc 8.8 |
 | Photo review over HTTP | `/photos` list and `/photos/last.jpg` on the camera | Phone on the AP can browse; viewer can fetch a thumbnail | SD capture | Technical doc 10.6 |
 | Manual flash override | Auto / always-on / always-off via long press | Mode visible and persistent | Button plan | Technical doc 7.4.4 |
@@ -57,6 +65,7 @@ Status legend: **Done** / **P0** (needed before an alpha release) / **P1** (robu
 | OTA / dual partition | OTA image, A/B rollback | Upgrade and rollback verified | Partition table | Technical doc 10.5 |
 | Dead-code / doc cleanup | One final technical doc; remove stale drafts | Repo has one source of truth | — | docs/ |
 | Security review | UDP payload authentication, replay protection | Threat model documented | Protocol change | Technical doc 10.5 |
+| Sensor sharpness/denoise | Optional control packet for OV2640 sharpness/denoise | Side-by-side capture, no ringing on the 1-bit panel | Protocol extension | Technical doc 8.8 |
 | Production provisioning | Serial/SoftAP provisioning and calibration | New board joins without recompiling | — | README |
 
 ## Non-goals (evaluated, not adopted)

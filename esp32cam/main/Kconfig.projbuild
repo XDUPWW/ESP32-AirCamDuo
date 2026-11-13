@@ -119,13 +119,44 @@ menu "ESP32-CAM"
             Disable to keep a fixed interval, e.g. to measure the pipeline's
             ceiling with APP_UDP_INTERVAL_MS=0.
 
+    config APP_UDP_TARGET_FPS
+        int "Viewer fps the sender paces itself to"
+        range 10 60
+        default 40
+        depends on APP_UDP_ADAPT
+        help
+            Frame period / target is the sleep budget, and the viewer's measured
+            fps trims it by a millisecond per second. 20 is the comfortable
+            number; 40 needs the I2C overclock on the viewer side.
+
+    config APP_UDP_GRAY_SCALE
+        int "tjpgd decode scale (0 = full size, 1 = half)"
+        range 0 1
+        default 0
+        depends on APP_UDP_SOURCE_JPEG
+        help
+            Full size costs about 3 ms per frame (encode 14-15 -> 17-18 ms) and
+            still holds 40 fps, so it is the default: the panel gets 160x120
+            samples from a 160x80 centre crop instead of 80x40 enlarged 1.6x.
+            Half size is the fallback if the CPU budget is needed elsewhere.
+
+    config APP_UDP_AUTO_QUALITY
+        bool "Spend idle frame time on sensor JPEG quality"
+        default y
+        depends on APP_UDP_ADAPT
+        help
+            Steps the sensor from JPEG quality 12 to 9 to 7 while the pacing
+            loop still has at least 2 ms of idle time and the viewer holds the
+            target fps. A step that drops the viewer below target is reverted
+            and the next attempt waits twice as long.
+
     config APP_UDP_INTERVAL_MS
         int "Milliseconds between sent frames"
         default 10
         range 0 2000
         depends on APP_UDP_ENABLE
         help
-            Starting interval; the camera then follows the viewer's feedback
-            to stay between 14 and 18 fps.
+            Starting interval, replaced by period - measured work on the first
+            five-second window.
 
 endmenu

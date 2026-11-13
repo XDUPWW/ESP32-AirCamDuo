@@ -1199,7 +1199,7 @@ CONFIG_APP_I2C_CLOCK_KHZ=800
 # default:
 # CONFIG_APP_VIEW_PARTIAL is not set
 # default:
-CONFIG_APP_VIEW_GAIN=110
+CONFIG_APP_VIEW_AGC=y
 # default:
 CONFIG_APP_VIEW_DITHER=y
 # end of ESP32-C5 camera viewer

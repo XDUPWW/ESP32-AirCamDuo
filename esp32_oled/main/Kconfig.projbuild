@@ -74,10 +74,22 @@ menu "ESP32-C5 camera viewer"
         default 120
         depends on APP_VIEW_PARTIAL
 
+    config APP_VIEW_AGC
+        bool "Auto contrast (histogram stretch)"
+        default y
+        help
+            Finds the 2% and 98% percentile of every frame and maps them to the
+            panel's black and white levels, so dark scenes are lifted and bright
+            ones are pulled down instead of clipping. The window follows the
+            measurement a quarter of the way per frame, which settles instead of
+            pumping. Costs one histogram pass over the frame (well under 1 ms)
+            and replaces APP_VIEW_GAIN.
+
     config APP_VIEW_GAIN
-        int "Display brightness gain (percent)"
+        int "Display brightness gain (percent, auto contrast off)"
         range 50 300
         default 110
+        depends on !APP_VIEW_AGC
         help
             Multiplies the grey value before it is reduced to one bit. Useful
             for dim scenes on the small panel.
