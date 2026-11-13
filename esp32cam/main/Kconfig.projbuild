@@ -112,6 +112,61 @@ menu "ESP32-CAM"
         range 500 30000
         default 3000
 
+    config APP_SD_ENABLE
+        bool "Watch the microSD slot (hot plug)"
+        default y
+        help
+            The board has no card-detect switch wired to a GPIO, so the monitor
+            mounts the card when it appears and sends a CMD13 every second once
+            it is mounted. Nothing is written, so pulling the card is safe.
+
+    config APP_SD_PIN_CLK
+        int "microSD CLK GPIO"
+        range 0 39
+        default 14
+
+    config APP_SD_PIN_CMD
+        int "microSD CMD GPIO"
+        range 0 39
+        default 15
+
+    config APP_SD_PIN_D0
+        int "microSD D0 GPIO"
+        range 0 39
+        default 2
+        help
+            1-bit mode only: on the AI-Thinker board D1 shares GPIO4 with the
+            flash LED, and D2/D3 share GPIO12/13.
+
+    config APP_SD_LOG_DEBUG
+        bool "Verbose sdmmc/fatfs driver logs (bring-up only)"
+        default n
+        depends on APP_SD_ENABLE
+        help
+            Prints the driver's own command trace. The monitor normally mutes
+            these tags so a board without a card does not flood the console.
+
+    config APP_SD_START_DELAY_MS
+        int "Delay the first card mount by this many milliseconds"
+        range 0 30000
+        default 6000
+        depends on APP_SD_ENABLE
+        help
+            Mounting allocates FATFS buffers; doing it while Wi-Fi and the first
+            video frames are coming up cost pbufs and dropped frames.
+
+    config APP_SD_PROBE_MS
+        int "Milliseconds between card presence checks"
+        range 200 10000
+        default 1000
+        depends on APP_SD_ENABLE
+
+    config APP_SD_RETRY_MS
+        int "Milliseconds between mount attempts while no card answers"
+        range 200 30000
+        default 2000
+        depends on APP_SD_ENABLE
+
     config APP_UDP_ADAPT
         bool "Adapt the send interval from the viewer's fps feedback"
         default y
@@ -122,12 +177,13 @@ menu "ESP32-CAM"
     config APP_UDP_TARGET_FPS
         int "Viewer fps the sender paces itself to"
         range 10 60
-        default 40
+        default 30
         depends on APP_UDP_ADAPT
         help
             Frame period / target is the sleep budget, and the viewer's measured
-            fps trims it by a millisecond per second. 20 is the comfortable
-            number; 40 needs the I2C overclock on the viewer side.
+            fps trims it by a millisecond per second. 30 leaves about 8 ms per
+            frame of margin for air jitter and for the quality ladder; 40 is
+            reachable with the viewer's I2C overclock but leaves only 3 ms.
 
     config APP_UDP_GRAY_SCALE
         int "tjpgd decode scale (0 = full size, 1 = half)"

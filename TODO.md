@@ -12,18 +12,22 @@ Status legend: **Done** / **P0** (needed before an alpha release) / **P1** (robu
 
 ## Done
 
-- [x] UDP gray8 link: 128×64, 6 fragments, 39.9–40.2 fps measured
+- [x] UDP gray8 link: 128×64, 6 fragments, 30.0–30.7 fps measured
 - [x] tjpgd Y-only decode on the camera (encode 17 ms at full 160×120 luma)
 - [x] UDP reassembly with `frame_id` + receiver-side 64-bit fragment mask
 - [x] Adaptive send interval from viewer feedback (first version: product target 15–20 fps, deadband 18–20 fps, acceptance ≥18 fps; superseded by the 40 fps feed-forward pacer below)
 - [x] Dual-core pinning: camera encode/send on core 1, feedback/Wi-Fi/HTTP on core 0; measured 20.2–20.4 fps
 - [x] Hardened partial OLED refresh behind `APP_VIEW_PARTIAL`; measured 29.5 fps vs 32.2 fps full with dithering, so full refresh stays default
-- [x] 40 fps target: feed-forward interval (period − measured work) plus a ±1 ms/s trim; 39.9–40.2 fps measured over 150 s
+- [x] 40 fps target: feed-forward interval (period − measured work) plus a ±1 ms/s trim; 39.9–40.2 fps measured over 150 s (lowered to 30 fps later for margin)
 - [x] Removed the 1 ms inter-fragment delay: send 12 → 4 ms and 38.7 → 40.0 fps, with no change in drop rate (drop cost was air-level)
 - [x] Full-size luma decode (tjpgd scale 0): 3 ms more encode, 40 fps still held, 4× the samples behind the 128×64 panel
 - [x] Resampling: 2:1 centre crop then area average (bilinear when the source is under panel size) instead of nearest neighbour
 - [x] Viewer auto contrast: per-frame 2%/98% percentile stretch, quarter-step EMA, gain capped at 3.0×
 - [x] Adaptive sensor JPEG quality ladder driven by measured idle frame time, with revert and dwell backoff
+- [x] Target lowered to 30 fps (deadband 29–31); the quality ladder now reaches JPEG q3 inside the extra 8 ms
+- [x] microSD hot-plug monitor: 1-bit SDMMC, no CD switch, mount on appearance plus a CMD13 presence probe; a 30 GB card mounts at 20 MHz
+- [x] Fix: a partially filled `sdmmc_slot_config_t` left `cd = GPIO0`, which is the camera XCLK — the slot init stole the clock and every frame grab timed out
+- [x] Defer the first SD mount by 6 s: mounting during the boot ramp cost 116 sendto ENOMEM retries and 45 dropped frames
 - [x] I2C clock configurable: 400/600/800 kHz tested (0 errors); 800 kHz flush 15 ms, 45.1 fps display ceiling; Kconfig default 400, this build 800
 - [x] JPEG frame buffer fix (3,840 B → 32 KB) for busy scenes
 - [x] Auto flash: AEC + panel-average fallback, hysteresis and 3 s dwell
@@ -39,7 +43,7 @@ Status legend: **Done** / **P0** (needed before an alpha release) / **P1** (robu
 | C5 multi-button controls | Implement the decided mapping: `KEY_FREEZE=GPIO3`, `KEY_SHUTTER=GPIO0`, `KEY_PREVIEW=GPIO1` (active low, 30 ms debounce). Kconfig: `APP_BUTTON_FREEZE_GPIO=3`, `APP_BUTTON_SHUTTER_GPIO=0`, `APP_BUTTON_PREVIEW_GPIO=1`. **GPIO0 is the BOOT strap**; verify wiring. | Each key produces independent events; no double-click gestures; long `KEY_FREEZE` only forces video | Confirm wiring and the BOOT pin behaviour | Technical doc 5.2.6 / 7.2 / 7.5.2 / 7.7 / 11.3; README features |
 | Viewer button wiring | Mapping decided (3/0/1); verify each physical key and that GPIO0 does not hold low at reset. Current firmware still uses a single key on GPIO0 and produces no events. | Press/release/long-press logs appear per key; freeze/shutter/preview work | Board schematic or multimeter | README limits; technical doc 5.2.6 |
 | Shutter semantics | **Decided**: capture the current frame directly, save the full JPEG to SD; the viewer stays on that frame and shows `SAVED`; `KEY_FREEZE` returns to video. Implement the state machine and SAVED indication. | Current frame saved as a valid JPEG; viewer stays; SAVED visible; defined return path | P0 multi-button + SD | Technical doc 7.5.2 / 10.6 |
-| SD JPEG capture | SDMMC **1-bit** (CLK14/CMD15/D0 2, keeping GPIO4 flash); write the current frame as `IMG_%04u.JPG`; NVS counter; increment only after a successful write; dedicated low-priority photo task with a depth-1 queue; keep the viewer on the captured frame | Files readable on PC; counter survives reboot; writes do not stall UDP/display; viewer stays on the saved frame | SD hardware verification, FAT32 card | Technical doc 10.6; README features/config |
+| SD JPEG capture | SDMMC **1-bit** (CLK14/CMD15/D0 2, keeping GPIO4 flash); write the current frame as `IMG_%04u.JPG`; NVS counter; increment only after a successful write; dedicated low-priority photo task with a depth-1 queue; keep the viewer on the captured frame | Files readable on PC; counter survives reboot; writes do not stall UDP/display; viewer stays on the saved frame | ~~SD hardware verification~~ (done: a 30 GB FAT32 card mounts), FAT32 card | Technical doc 10.6; README features/config |
 | Image preview switching | **Decided**: preview the last N (default 10) JPEGs from SD; `KEY_PREVIEW` cycles; long `KEY_FREEZE` exits. Data source is the SD photo list; the CAM reads/decodes and sends 128×64 over UDP (no HTTP client on the C5 required). | Switch within the defined time; no corruption; return to LIVE | SD capture, `APP_PREVIEW_COUNT` | Technical doc 7.5.2 / 10.6; README planned |
 | Long-run validation | ≥24 h soak, complex scenes, temperature and range; confirm no `CAMERA LOST` after the 32 KB fix | No reboot/leak; fps and heap stable | Two boards + bench | Technical doc 10.4 |
 
@@ -47,6 +51,7 @@ Status legend: **Done** / **P0** (needed before an alpha release) / **P1** (robu
 
 | Item | What | Acceptance | Dependency | Affected docs |
 |---|---|---|---|---|
+| Hot-plug removal check | Pull the card while the viewer streams; expect `card out (bus timeout)` and a re-mount when it goes back in | One log line each way, video unaffected, `/status` flips | — | Technical doc 8.7 |
 | Feedback-loss recovery | Not needed for the rate any more: the feed-forward term holds it. Still missing: a warning when feedback disappears | Log line after N seconds without feedback; rate unchanged | — | Technical doc 8.5.3 |
 | Quality ladder soak | The ladder has only been observed for 150 s per run | Holds 39–41 fps and a settled step for 30 min, including a busy scene and a light/dark transition | — | Technical doc 8.5.4 |
 | Auto-contrast A/B | Compare `APP_VIEW_AGC=y/n` on the same scene with a photo of the panel | Documented side-by-side, gain per scene | — | Technical doc 8.5.4 |

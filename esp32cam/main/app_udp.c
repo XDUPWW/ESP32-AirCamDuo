@@ -433,9 +433,10 @@ static void udp_task(void *arg)
 // probe that drops the viewer below target is reverted and the next probe waits
 // twice as long, so the loop settles instead of hunting.
 #if defined(CONFIG_APP_UDP_AUTO_QUALITY)
-static const uint8_t k_quality_steps[] = { 16, 12, 9, 7, 5 };
+static const uint8_t k_quality_steps[] = { 16, 12, 9, 7, 5, 3 };
 #define QUALITY_STEP_COUNT ((int)(sizeof(k_quality_steps) / sizeof(k_quality_steps[0])))
 #define QUALITY_START_STEP 1
+#define QUALITY_WARMUP_US  (12 * 1000 * 1000)
 #define QUALITY_SETTLE_US  (3 * 1000 * 1000)
 #define QUALITY_DWELL_US   (8 * 1000 * 1000)
 #define QUALITY_DWELL_MAX  (120 * 1000 * 1000)
@@ -446,6 +447,7 @@ static bool s_quality_probing;
 static int64_t s_quality_changed_us;
 static int64_t s_quality_dwell_us = QUALITY_DWELL_US;
 static int s_quality_low_streak;
+static int64_t s_quality_warmup_us;
 
 static void quality_apply(sensor_t *sensor, int step)
 {
@@ -457,18 +459,27 @@ static void quality_apply(sensor_t *sensor, int step)
 
 static void quality_track(sensor_t *sensor, uint16_t fps_x10)
 {
-    // Before the viewer's first report there is no measurement to react to.
+    // Before the viewer's first report there is no measurement to react to, and
+    // the first seconds after boot are a ramp (Wi-Fi join, first frames, SD
+    // mount), so the ladder starts deciding only once that has passed.
     if (fps_x10 == 0) {
         return;
     }
     const int64_t now = esp_timer_get_time();
+    if (s_quality_warmup_us == 0) {
+        s_quality_warmup_us = now;
+    }
+    if (now - s_quality_warmup_us < QUALITY_WARMUP_US) {
+        s_quality_changed_us = now;
+        return;
+    }
     const int lower = (TARGET_FPS - 1) * 10;
 
     if (s_quality_probing && now - s_quality_changed_us >= QUALITY_SETTLE_US) {
         if (fps_x10 < lower) {
             ESP_LOGI(TAG, "quality %d -> %d (probe cost too much, %u.%u fps), dwell %lld s",
                      k_quality_steps[s_quality_step], k_quality_steps[s_quality_good],
-                     fps_x10 / 10, fps_x10 % 10, (long long)(s_quality_dwell_us / 2000000));
+                     fps_x10 / 10, fps_x10 % 10, (long long)(s_quality_dwell_us / 1000000));
             s_quality_step = s_quality_good;
             quality_apply(sensor, s_quality_step);
             s_quality_dwell_us *= 2;
@@ -509,8 +520,11 @@ static void quality_track(sensor_t *sensor, uint16_t fps_x10)
         }
     }
 
+    // "At target" is the bottom of the deadband, not the nominal rate: the pacer
+    // settles a little under it and would otherwise never probe.
     if (!s_quality_probing && s_quality_step + 1 < QUALITY_STEP_COUNT &&
-        now - s_quality_changed_us >= s_quality_dwell_us && s_ff_ms >= 2 && fps_x10 >= TARGET_FPS * 10) {
+        now - s_quality_changed_us >= s_quality_dwell_us && s_ff_ms >= 2 &&
+        fps_x10 >= lower) {
         s_quality_step++;
         s_quality_probing = true;
         s_quality_changed_us = now;

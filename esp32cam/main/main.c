@@ -1,5 +1,6 @@
 #include "app_camera.h"
 #include "app_http.h"
+#include "app_sd.h"
 #include "app_udp.h"
 #include "app_wifi.h"
 #include "cam_selftest.h"
@@ -66,6 +67,13 @@ void app_main(void)
     err = app_udp_start();
     if (err != ESP_OK) {
         ESP_LOGW(TAG, "udp sender failed: %s", esp_err_to_name(err));
+    }
+
+    // Own task: a missing card must not delay the video path, and a card
+    // appearing later has to be picked up without a reboot.
+    err = app_sd_start();
+    if (err != ESP_OK) {
+        ESP_LOGW(TAG, "sd monitor failed: %s", esp_err_to_name(err));
     }
 
     ESP_LOGI(TAG, "web ui on %s, camera %s", app_wifi_url(),

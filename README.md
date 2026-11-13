@@ -4,11 +4,11 @@
 
 > **Status: planning / alpha.** The core UDP gray8 link is implemented and measured. Hardware items (viewer buttons, C5 shutter, SD capture, image preview) are unverified or planned. See [TODO.md](TODO.md).
 
-ESP32-AirCamDuo streams a 128×64 grayscale luma frame from an ESP32-CAM to an ESP32-C5 over UDP and draws it on a 128×64 SSD1306 OLED. The camera performs the JPEG decode and panel-sized resampling; the viewer normally only reassembles and draws. A 1 Hz feedback packet lets the camera pace itself against the product target of 40 fps (control deadband 39–41 fps, acceptance ≥39 fps). Whatever frame time is left over is spent on picture quality: an auto-contrast histogram stretch on the viewer, bilinear/area resampling on the camera, and an adaptive sensor JPEG-quality ladder.
+ESP32-AirCamDuo streams a 128×64 grayscale luma frame from an ESP32-CAM to an ESP32-C5 over UDP and draws it on a 128×64 SSD1306 OLED. The camera performs the JPEG decode and panel-sized resampling; the viewer normally only reassembles and draws. A 1 Hz feedback packet lets the camera pace itself against the product target of 30 fps (control deadband 29–31 fps, acceptance ≥29 fps). Whatever frame time is left over is spent on picture quality: an auto-contrast histogram stretch on the viewer, bilinear/area resampling on the camera, and an adaptive sensor JPEG-quality ladder.
 
 **Naming boundary.** `AirCamDuo` = Air (wireless) + Cam (camera) + Duo (dual board); the current transport is grayscale luma. Full-JPEG capture to SD and image preview are planned and do not change the project name.
 
-The camera runs a fixed **20 MHz XCLK**. At QQVGA the sensor can already produce ~50 fps at 20 MHz, so 40 MHz XCLK overclocking is deliberately not used. At 40 fps the frame budget is 25 ms: capture 0, full-size tjpgd luma decode + 128×64 resampling 17 ms, six UDP fragments 4 ms, then 3 ms of pacing; the viewer spends 5 ms fetching, 5–6 ms rendering and 15 ms flushing over the overclocked I2C bus. The camera’s UDP encode/send task is pinned to core 1; Wi-Fi and the HTTP server stay on core 0; measured 39.9–40.2 fps.
+The camera runs a fixed **20 MHz XCLK**. At QQVGA the sensor can already produce ~50 fps at 20 MHz, so 40 MHz XCLK overclocking is deliberately not used. At 30 fps the frame budget is 33 ms: capture 0, full-size tjpgd luma decode + 128×64 resampling 17–19 ms, six UDP fragments 4 ms, then 9–14 ms of pacing; the viewer spends 13 ms fetching (mostly waiting), 5 ms rendering and 14 ms flushing over the overclocked I2C bus. The camera’s UDP encode/send task is pinned to core 1; Wi-Fi and the HTTP server stay on core 0; measured 30.0–30.7 fps.
 
 ```mermaid
 flowchart LR
@@ -30,12 +30,13 @@ flowchart LR
 
 | Feature | State | Notes |
 |---|---|---|
-| UDP gray8 link | **Implemented** | 128×64, 8,192 B/frame, 6 fragments, 39.9–40.2 fps measured |
+| UDP gray8 link | **Implemented** | 128×64, 8,192 B/frame, 6 fragments, 30.0–30.7 fps measured |
 | tjpgd Y-only decode on camera | **Implemented** | encode 17 ms at full 160×120 luma, 20×15 ms per frame |
 | Viewer zero-decode default path | **Implemented** | the default `format=0` path does not decode; a compatibility fallback exists for `format=1` |
-| Adaptive pacing | **Implemented** | product target 40 fps, deadband 39–41 fps, acceptance ≥39 fps; feed-forward interval = period − measured work, ±1 ms/s trim from the viewer |
+| Adaptive pacing | **Implemented** | product target 30 fps, deadband 29–31 fps, acceptance ≥29 fps; feed-forward interval = period − measured work, ±1 ms/s trim from the viewer |
 | Auto contrast (AGC) | **Implemented** | per-frame 2%/98% percentile stretch on the viewer, quarter-step EMA, gain capped at 3.0×, replaces the fixed 110% gain |
-| Adaptive sensor quality | **Implemented** | JPEG 12 → 9 → 7 → 5 while ≥2 ms of frame time is idle and the viewer holds target; a failed probe reverts and doubles the dwell (8 s → 120 s) |
+| Adaptive sensor quality | **Implemented** | JPEG 12 → 9 → 7 → 5 → 3 while ≥2 ms of frame time is idle and the viewer holds target; a failed probe reverts and doubles the dwell (8 s → 120 s) |
+| microSD hot plug | **Implemented (insert verified)** | 1-bit SDMMC on CLK14/CMD15/D0 2, no card-detect switch, so the monitor mounts on appearance and sends CMD13 every second; mounted a 30 GB card at 20 MHz. Removal path implemented, not yet pulled on hardware |
 | Resampling | **Implemented** | 160×120 → 2:1 centre crop → 128×64 area average; bilinear when the source is smaller than the panel |
 | Reassembly | **Implemented** | `frame_id` + receiver-side 64-bit fragment mask; header carries `frag_index`/`frag_count` |
 | Auto flash | **Implemented** | OV2640 AEC + panel-average fallback, 600/250 thresholds, 3 s dwell |
@@ -50,7 +51,7 @@ flowchart LR
 
 | Part | Notes |
 |---|---|
-| ESP32-CAM (AI-Thinker) | OV2640, 4 MB flash, PSRAM; XCLK **GPIO0**; flash LED **GPIO4**; microSD slot (1-bit planned: CLK14/CMD15/D0 2) |
+| ESP32-CAM (AI-Thinker) | OV2640, 4 MB flash, PSRAM; XCLK **GPIO0**; flash LED **GPIO4**; microSD 1-bit **CLK14/CMD15/D0 2** (no card-detect line) |
 | ESP32-C5 dev board | 16 MB flash; SoftAP + UDP receiver + OLED driver |
 | SSD1306 128×64 | I2C, 0x3C, SDA **GPIO8**, SCL **GPIO9**, 400 kHz spec; this build 800 kHz overclock (tested stable on this module) |
 | Buttons | planned: `KEY_FREEZE=GPIO3`, `KEY_SHUTTER=GPIO0`, `KEY_PREVIEW=GPIO1`, active low; current firmware has a single GPIO0 button, unverified |
@@ -70,19 +71,20 @@ Bench measurements on the current two boards; not a guarantee.
 
 | Metric | Value |
 |---|---|
-| Displayed fps | 39.9–40.2 (steady, 150 s window) |
+| Displayed fps | 30.0–30.7 (steady, 150 s window) |
 | Max display, 400 kHz I2C | 32.2 fps (flush 25 ms) |
 | Max display, 600 kHz I2C (overclock) | 40.4 fps (flush 18 ms) |
 | Max display, 800 kHz I2C (overclock) | 45.1 fps (flush 15 ms) |
 | Max with partial refresh | 29.5 fps (flush 27 ms; dithering changes most pages) |
 | Frame | 128×64 gray8, 8,192 B, 6 UDP fragments |
-| Camera: capture / encode / send | 0 / 17 / 4 ms |
-| Camera sensor JPEG | 3.9–5.0 KB per frame at the ladder's top step (quality 5) |
-| Viewer: fetch / render / flush | 5 / 5–6 / 15 ms |
+| Camera: capture / encode / send | 0 / 17–19 / 4 ms |
+| Camera sensor JPEG | 4.0–6.1 KB per frame at the ladder's top step (quality 3) |
+| Camera pacing sleep | 9–14 ms (the budget the quality ladder competes for) |
+| Viewer: fetch / render / flush | 13 / 5 / 14 ms |
 | Viewer AGC | source window 19–251 → gain 1.0× in bright light; 10–126 → 2.1× in dim light |
-| Link | 802.11n 20 MHz MCS7, RSSI −40…−55 dBm, ~2.6 Mbps at 40 fps |
+| Link | 802.11n 20 MHz MCS7, RSSI −25…−55 dBm, ~2.1 Mbps at 30 fps |
 | Viewer free heap | ~119 KB |
-| Send errors / drops | 1 error and 1 dropped frame at start-up; 0 thereafter over 5,800 frames |
+| Send errors / drops | 3 send retries and 7 dropped frames during the start-up ramp; 0 thereafter over 4,400 frames |
 
 ## Build & flash
 
@@ -123,11 +125,13 @@ cd esp32_oled && idf.py build && idf.py -p COM8 flash monitor
 | Camera | `APP_JPEG_SIZE` | `QQVGA` (160×120) |
 | Camera | `APP_UDP_SOURCE` | `JPEG` |
 | Camera | `APP_UDP_HOST` / `APP_UDP_PORT` | `192.168.4.1` / `5000` |
-| Camera | `APP_UDP_ADAPT` / `APP_UDP_TARGET_FPS` | `y` / `40` |
+| Camera | `APP_UDP_ADAPT` / `APP_UDP_TARGET_FPS` | `y` / `30` |
 | Camera | `APP_UDP_AUTO_QUALITY` | `y` (quality ladder on idle frame time) |
 | Camera | `APP_UDP_GRAY_SCALE` | `0` (full-size luma; `1` = half size, 3 ms cheaper) |
 | Camera | `APP_UDP_INTERVAL_MS` | `10` (starting value only) |
 | Camera | `APP_FLASH_DARK_AEC` / `APP_FLASH_BRIGHT_AEC` / `APP_FLASH_DWELL_MS` | `600` / `250` / `3000` |
+| Camera | `APP_SD_ENABLE` / `APP_SD_PIN_CLK` / `APP_SD_PIN_CMD` / `APP_SD_PIN_D0` | `y` / `14` / `15` / `2` |
+| Camera | `APP_SD_START_DELAY_MS` / `APP_SD_PROBE_MS` / `APP_SD_RETRY_MS` | `6000` / `1000` / `2000` |
 
 Planned (not in firmware yet): `APP_BUTTON_FREEZE_GPIO=3`, `APP_BUTTON_SHUTTER_GPIO=0`, `APP_BUTTON_PREVIEW_GPIO=1`, `APP_PREVIEW_COUNT=10`.
 
@@ -149,7 +153,8 @@ TODO.md         Current gaps and roadmap
 - Multi-button freeze/shutter/preview, SD capture and image preview are planned, not implemented.
 - GPL-2.0 is selected, but the vendored `esp32-camera` and `esp_jpeg` components are Apache-2.0 (not GPLv2-compatible); review before redistribution.
 - XCLK is fixed at 20 MHz; 40 MHz overclocking is not used because the sensor is not the bottleneck at QQVGA.
-- 40 fps needs the I2C overclock: the display’s full refresh is 25 ms @400 kHz (~32 fps ceiling) and 15 ms @800 kHz (~45 fps). 800 kHz is out of SSD1306/C5 spec and panel-dependent (tested stable on this module).
+- The I2C overclock is still in use: the display’s full refresh is 25 ms @400 kHz (~32 fps ceiling) and 14–15 ms @800 kHz (~45 fps). 800 kHz is out of SSD1306/C5 spec and panel-dependent (tested stable on this module). 30 fps itself would also fit at 400 kHz, but the overclock leaves room for the quality ladder.
+- microSD: the board has no card-detect switch, so a removal is noticed by a failed CMD13 (two in a row) rather than an interrupt, and nothing writes to the card yet. The card-present path is verified; pulling a card mid-run is not.
 - The auto contrast and the quality ladder are tuned on this bench only; the quality steps are JPEG quality, so their visible effect after 1-bit dithering is second-order compared with the contrast stretch and the resampling.
 - Partial refresh is opt-in (`APP_VIEW_PARTIAL`) but measured slower with dithering (29.5 vs 32.2 fps).
 - No OTA, no automated tests.

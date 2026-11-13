@@ -7,6 +7,7 @@
 #include <sys/socket.h>
 
 #include "app_camera.h"
+#include "app_sd.h"
 #include "esp_heap_caps.h"
 #include "esp_http_server.h"
 #include "esp_log.h"
@@ -46,18 +47,24 @@ static esp_err_t root_get(httpd_req_t *req)
 
 static esp_err_t status_get(httpd_req_t *req)
 {
-    char body[384];
+    char body[512];
     int64_t now = esp_timer_get_time();
     int64_t stream_seconds = s_stream_started_us > 0 ? (now - s_stream_started_us) / 1000000 : 0;
+    app_sd_state_t sd;
+    app_sd_get(&sd);
 
     int len = snprintf(body, sizeof(body),
                        "{\"camera\":\"%s\",\"mode\":\"%s\",\"sensor\":\"%s\","
                        "\"streams\":%d,\"frames\":{\"stream\":%u,\"jpeg\":%u,\"raw\":%u},"
-                       "\"stream_seconds\":%lld,\"heap_internal_free\":%u,\"psram_free\":%u}\n",
+                       "\"stream_seconds\":%lld,\"sd\":{\"present\":%s,\"mounts\":%u,"
+                       "\"mb\":%u,\"free_mb\":%u},"
+                       "\"heap_internal_free\":%u,\"psram_free\":%u}\n",
                        app_cam_available() ? "ready" : "unavailable", app_cam_mode_name(),
                        app_cam_sensor_name(), app_cam_stream_users(),
                        (unsigned)s_stream_frames, (unsigned)s_jpeg_frames,
                        (unsigned)s_raw_frames, (long long)stream_seconds,
+                       sd.present ? "true" : "false", (unsigned)sd.mounts,
+                       (unsigned)sd.capacity_mb, (unsigned)sd.free_mb,
                        (unsigned)heap_caps_get_free_size(MALLOC_CAP_INTERNAL),
                        (unsigned)heap_caps_get_free_size(MALLOC_CAP_SPIRAM));
 

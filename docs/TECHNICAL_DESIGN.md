@@ -41,7 +41,7 @@
 
 **Goals / non-goals**:
 
-- Goal: product target 40 fps; measured 39.9–40.2 fps; acceptance ≥39 fps; stable (send errors=0, controlled drops, self-reconnect); auto flash; auto contrast; quality traded for idle frame time; button freeze; SD capture and preview planned.
+- Goal: product target 30 fps; measured 30.0–30.7 fps; acceptance ≥29 fps; stable (send errors=0, controlled drops, self-reconnect); auto flash; auto contrast; quality traded for idle frame time; button freeze; SD capture and preview planned.
 - Non-goals (current): cloud, recording, audio, OTA, production provisioning, battery/enclosure.
 
 > The exact product scenario (inspection / teaching / consumer) is still to be confirmed. TBD-ADD
@@ -69,7 +69,7 @@
 - OV2640 spec is 6–27 MHz; **20 MHz is the fixed default** in this project. 40 MHz needs a 1-bit LEDC duty (already the case) but is unstable at SVGA and above; it is deliberately not used.
 - PSRAM bandwidth is ~20 MB/s. At UXGA a YUV422 round trip is ~7.68 MB/frame → ~2.6 fps; at QQVGA the frame is tiny, so PSRAM is not limiting.
 - Grayscale: raw capture peaks around 32 fps with dual-core; RGB→gray conversion drops to ~12.5 fps. This project avoids that conversion by decoding only Y (tjpgd) and sending a panel-sized gray frame.
-- Conclusion: QQVGA JPEG at 20 MHz is not sensor- or PSRAM-bound. With the display overclocked to 800 kHz (flush 15 ms → ~45 fps ceiling) the CAM pipeline becomes the limit: 0 ms capture, 17 ms full-size luma decode and panel resampling, 4 ms to send six fragments, 25 ms period at 40 fps. The remaining 3 ms are given back to picture quality.
+- Conclusion: QQVGA JPEG at 20 MHz is not sensor- or PSRAM-bound. With the display overclocked to 800 kHz (flush 15 ms → ~45 fps ceiling) the CAM pipeline becomes the limit: 0 ms capture, 17–19 ms full-size luma decode and panel resampling, 4 ms to send six fragments, 33 ms period at 30 fps. The remaining 9–14 ms are given back to picture quality.
 
 ## 1.3 Bandwidth and Latency Budget
 
@@ -82,23 +82,23 @@
 
 **Bandwidth**:
 
-- 40 fps × 8.7 KB ≈ **2.8 Mbps**;
+- 30 fps × 8.7 KB ≈ **2.1 Mbps**;
 - negotiated 802.11n 20 MHz 1SS MCS7 = **72.2 Mbps**;
-- ≈**4%** of PHY; ≈13% even at 30% MAC efficiency → **the air is not the bottleneck**, and the sensor JPEG size (3–5 KB) never reaches the wire because the camera re-encodes to a fixed 8,192 B panel frame.
+- ≈**3%** of PHY; ≈10% even at 30% MAC efficiency → **the air is not the bottleneck**, and the sensor JPEG size (3–5 KB) never reaches the wire because the camera re-encodes to a fixed 8,192 B panel frame.
 
 **Latency** (bench means; end-to-end scheduling not separately instrumented):
 
 | Stage | Time |
 |---|---|
 | CAM capture | 0 ms (GRAB_LATEST, buffer already full) |
-| CAM encode (tjpgd Y-only full size + resampling) | 17 ms |
+| CAM encode (tjpgd Y-only full size + resampling) | 17–19 ms |
 | CAM send (6 fragments, back to back) | 4 ms |
-| CAM pacing sleep | 3 ms (the budget the quality ladder competes for) |
+| CAM pacing sleep | 9–14 ms (the budget the quality ladder competes for) |
 | Air (8.7 KB at 72 Mbps) | ≈1 ms |
-| C5 fetch + reassembly + copy | 5 ms |
-| C5 auto contrast + render | 5–6 ms |
-| C5 flush | 15 ms @800 kHz (25 ms @400 kHz) |
-| Frame period at 40 fps | **25 ms** |
+| C5 fetch + reassembly + copy | 5 ms of work (13–14 ms wall, the rest waits for the slot) |
+| C5 auto contrast + render | 5 ms |
+| C5 flush | 14–15 ms @800 kHz (25 ms @400 kHz) |
+| Frame period at 30 fps | **33 ms** |
 
 → **Encoding and the I2C flush are the bottlenecks; the air is not.** This explains the later decisions: full-size decode only costs 3 ms (E20) while the display clock costs 10 ms (E17), raw YUV is slower, RTSP has no benefit, and partial refresh saves little.
 
@@ -108,7 +108,7 @@
 |---|---|---|---|---|
 | HTTP single GET | 1.4–1.9 (measured) | high (per-frame connect/window) | low/low | debug only |
 | MJPEG over TCP `/stream` | 1–3 (measured; 1.2–1.4 s stalls) | high | low/low | below 15 fps |
-| Custom UDP + feedback | **39.9–40.2 (measured, 40 fps target)** | ≈28 ms (budget at 40 fps) | medium/medium | **adopted** |
+| Custom UDP + feedback | **30.0–30.7 (measured, 30 fps target)** | ≈35 ms (budget at 30 fps) | medium/medium | **adopted** |
 | RTSP + H.264 | theoretical; no HW encoder/decoder | higher (encode+decode+jitter) | high/high | not adopted |
 | RTSP + H.265 | same, heavier software decode | higher | higher | not adopted |
 | BLE video | far below 1.4 Mbps | high | low/medium | not adopted |
@@ -129,18 +129,18 @@
 
 ## 2.1 Goals, Non-goals, Frame-rate Vocabulary
 
-- **Product target**: 40 fps.
-- **Control deadband**: 39–41 fps (`fps<39` trim −1 ms, `fps>41` trim +1 ms, trim clamped to ±8 ms).
-- **Acceptance**: ≥39 fps.
-- **Measured**: 39.9–40.2 fps (150 s window; the earlier 15–20 fps target measured 18.5–20.5 fps).
+- **Product target**: 30 fps.
+- **Control deadband**: 29–31 fps (`fps<29` trim −1 ms, `fps>31` trim +1 ms, trim clamped to ±8 ms).
+- **Acceptance**: ≥29 fps.
+- **Measured**: 30.0–30.7 fps (150 s window). Earlier steps: a 15–20 fps target (18.5–20.5 measured) and a 40 fps target (39.9–40.2 measured, only 3 ms of margin).
 
 | Vocabulary | Value | Where used |
 |---|---|---|
-| Product target | 40 fps | requirements / README |
-| Control deadband | 39–41 fps | `app_udp.c` pacing |
-| Acceptance line | ≥39 fps | 7.8 |
-| Measured band | 39.9–40.2 fps | bench, 150 s window |
-| Quality ladder | JPEG 16/12/9/7/5 | `app_udp.c` auto quality |
+| Product target | 30 fps | requirements / README |
+| Control deadband | 29–31 fps | `app_udp.c` pacing |
+| Acceptance line | ≥29 fps | 7.8 |
+| Measured band | 30.0–30.7 fps | bench, 150 s window |
+| Quality ladder | JPEG 16/12/9/7/5/3 | `app_udp.c` auto quality |
 
 - Stability: 150 s through 5 minutes steady state, send errors ≤1, drops ≤1% of frames, reconnect ≤3 s.
 - Features: UDP video, auto flash, button freeze (single key now; multi-key planned), hidden AP, CAM HTTP side channel.
@@ -148,14 +148,14 @@
 
 ## 2.2 One-line Architecture
 
-> **The CAM captures QQVGA JPEG, decodes only Y with tjpgd at full size (160×120), centre-crops to 2:1, area-averages down to 128×64 and sends six UDP fragments; the C5 reassembles, stretches the contrast to the panel's full range and draws 1bpp with Floyd–Steinberg dithering; the C5 sends 1 Hz feedback so the CAM paces itself to 40 fps and spends whatever frame time is left on sensor JPEG quality.**
+> **The CAM captures QQVGA JPEG, decodes only Y with tjpgd at full size (160×120), centre-crops to 2:1, area-averages down to 128×64 and sends six UDP fragments; the C5 reassembles, stretches the contrast to the panel's full range and draws 1bpp with Floyd–Steinberg dithering; the C5 sends 1 Hz feedback so the CAM paces itself to 30 fps and spends whatever frame time is left on sensor JPEG quality, while a polled SD monitor watches the card slot.**
 
 ## 2.3 Key Conclusions
 
 | # | Conclusion | Evidence |
 |---|---|---|
-| 1 | Product target 40 fps; control deadband 39–41 fps; acceptance ≥39 fps; measured 39.9–40.2 fps | bench logs, `app_udp.c` |
-| 2 | FPS evolution: HTTP 1.4–1.9 → TCP stream 1–3 → decoupled+full refresh 3.8–7.2 (E03/E06/E07) → UDP 12.4–12.7 → adaptive 16.4–16.9 → tjpgd gray 18.5–20.5 → I2C 800 kHz + feed-forward pacing 39.9–40.2 fps (see 8.6) | 5-second windows |
+| 1 | Product target 30 fps; control deadband 29–31 fps; acceptance ≥29 fps; measured 30.0–30.7 fps | bench logs, `app_udp.c` |
+| 2 | FPS evolution: HTTP 1.4–1.9 → TCP stream 1–3 → decoupled+full refresh 3.8–7.2 (E03/E06/E07) → UDP 12.4–12.7 → adaptive 16.4–16.9 → tjpgd gray 18.5–20.5 → I2C 800 kHz + feed-forward 39.9–40.2 → 30 fps target 30.0–30.7 fps (see 8.6) | 5-second windows |
 | 3 | Steady state: send errors=0, drops=0; one transient ENOMEM observed | CAM/C5 logs |
 | 4 | Root cause of "busy scene disconnects": JPEG buffer only 160×120/5 = 3,840 B; fixed to 32 KB | `app_camera.c`, `cam_hal.c` |
 | 5 | tjpgd Y-only cut encode from 24 ms to 11–12 ms; the I2C refresh is the next wall (25 ms @400 kHz; 15 ms @800 kHz overclock → ~45 fps ceiling) | `tjpgd_gray/`, bench |
@@ -187,7 +187,7 @@ flowchart LR
     C -->|JPEG 3-5KB| D[tjpgd Y-only<br/>full -> 160x120]
     D -->|128x64| U[app_udp 6 fragments]
     U -->|UDP/5000| W1[WiFi STA PS=NONE]
-    F[feedback /5001] --> R[adaptive 40 fps + quality]
+    F[feedback /5001] --> R[adaptive 30 fps + quality]
     R --> U
     L[GPIO4 flash] --- D
     H[app_http] -.-> C
@@ -282,7 +282,7 @@ Driver (esp32-camera/i2c_master/gpio/lwip/esp_wifi)
 | Borrow/ack | C5 `cam_client.c` | reuse buffers; overwrite only after copy; wait ≤250 ms |
 | Compile-time policy | Kconfig | size/source/ports/interval/keys/brightness/flash |
 | State machines | CAM camera; C5 display | JPEG↔RAW; BOOT/WAIT/VIDEO/FROZEN/PREVIEW/LOST |
-| Feedback control | `app_udp.c` + `cam_client.c` | 1 s feed-forward interval plus ±1 ms/s trim, 39–41 fps deadband |
+| Feedback control | `app_udp.c` + `cam_client.c` | 1 s feed-forward interval plus ±1 ms/s trim, 29–31 fps deadband |
 | Probe with backoff | `app_udp.c` auto quality | step up while idle ≥2 ms, revert and double the dwell on a failed probe |
 | Packed wire structs | both | little-endian protocol |
 
@@ -315,7 +315,7 @@ Driver (esp32-camera/i2c_master/gpio/lwip/esp_wifi)
 
 | Pros | Risks |
 |---|---|
-| Low latency, zero decode on C5, stable 40 fps | UDP has no ACK; one lost fragment loses a frame |
+| Low latency, zero decode on C5, stable 30 fps | UDP has no ACK; one lost fragment loses a frame |
 | Adaptive pacing avoids backlog | feedback loss only removes the trim; the feed-forward term keeps holding the rate |
 | Idle frame time buys quality instead of sleeping | the quality ladder must be debounced, or it hunts |
 | Centralized, reviewable config | no auth/OTA; fixed IP/ports |
@@ -346,22 +346,33 @@ Driver (esp32-camera/i2c_master/gpio/lwip/esp_wifi)
 ### 5.1.3 `app_udp`
 
 - **Responsibility**: frame → tjpgd gray → 128×64 sampling → six UDP fragments; feed-forward pacing, sensor quality ladder; auto flash; (planned) shutter/preview commands.
-- **Implementation**: `SO_SNDBUF=16 KB`, fragments back to back (the 1 ms gap measured 12 ms of send time and 38.7 fps with no drop benefit), 3 retries with a 2 ms backoff. Pacing is feed-forward: every 5 s window `interval = 1000/target − (capture + encode + send)`, then the 1 Hz feedback trims it by ±1 ms per second within ±8 ms; clamp 0–120 ms. Quality ladder: steps 16/12/9/7/5, step up when `s_ff_ms ≥ 2` and fps ≥ target, revert and double the 8 s dwell (max 120 s) if a probe lands below target − 1, and step down after two consecutive seconds below target − 3.
+- **Implementation**: `SO_SNDBUF=16 KB`, fragments back to back (the 1 ms gap measured 12 ms of send time and 38.7 fps with no drop benefit), 3 retries with a 2 ms backoff. Pacing is feed-forward: every 5 s window `interval = 1000/target − (capture + encode + send)`, then the 1 Hz feedback trims it by ±1 ms per second within ±8 ms; clamp 0–120 ms. Quality ladder: steps 16/12/9/7/5/3, step up when `s_ff_ms ≥ 2` and fps is inside the deadband, revert and double the 8 s dwell (max 120 s) if a probe lands below target − 1, and step down after two consecutive seconds below target − 3. The ladder ignores the first 12 s after boot, because the start-up ramp looks like a slow link.
 - **Logging**: 5 s summary (see 4.4).
 - **Trade-off**: Y-only gray is slightly soft; scale=0 trades speed for sharpness.
 
-### 5.1.4 `app_wifi`
+### 5.1.4 `app_sd`
+
+- **Responsibility**: watch the microSD slot; nothing else touches the card yet.
+- **Why polling**: the AI-Thinker board does not route the card-detect switch to a GPIO, so presence is inferred from the bus.
+- **Insert**: a task mounts `esp_vfs_fat_sdmmc_mount("/sdcard", …)` 6 s after boot, retries every 2 s while nothing answers, and logs one line per transition (`card in: 30424 MB …`).
+- **Remove**: every 1 s `sdmmc_get_status()` (CMD13, no filesystem traffic); two failures in a row unmount and publish `card out (bus timeout)`. Nothing is written, so a pull cannot corrupt anything.
+- **Pins**: 1-bit SDMMC, CLK 14 / CMD 15 / D0 2, 20 MHz. D1 shares GPIO4 with the flash LED, which is why the bus is 1-bit.
+- **Interfaces**: `app_sd_start()`, `app_sd_get(app_sd_state_t*)`; the state also appears in `/status` as `sd: {present, mounts, mb, free_mb}`.
+- **Log noise**: the sdmmc/fatfs drivers log an error per failed attempt, so `sdmmc_req`, `vfs_fat_sdmmc` and `SD_HOST` are muted; `APP_SD_LOG_DEBUG` restores them for bring-up.
+- **Trade-off**: polling costs one CMD13 per second instead of a free interrupt, and a removal is noticed up to 2 s late.
+
+### 5.1.5 `app_wifi`
 
 - **Responsibility**: join the C5 AP; `WIFI_PS_NONE`; reconnect timer 1 s; after 20 s without IP enter APSTA fallback.
 - **Interfaces**: `app_wifi_start()`, `app_wifi_url()`.
 - **Trade-off**: infinite retry gives up standalone operation but recovers after a C5 reset.
 
-### 5.1.5 `app_http` (side channel)
+### 5.1.6 `app_http` (side channel)
 
 - Endpoints: `/`, `/stream`, `/jpg`, `/raw`, `/mode`, `/status`.
 - Shares the camera with UDP; mode switch returns 409 while a stream is active.
 
-### 5.1.6 `main` / `cam_selftest`
+### 5.1.7 `main` / `cam_selftest`
 
 - Boot: board info, reset reason, NVS, camera, Wi-Fi, HTTP, UDP; sensor self-test when missing.
 
@@ -432,7 +443,7 @@ Driver (esp32-camera/i2c_master/gpio/lwip/esp_wifi)
 | Capture/encode | `tjpgd_gray` | JPEG→Y gray, full size | JPEG | 160×120 | tjpgd | `tjpgd_gray_decode()` | Y only |
 | Capture/encode | `app_udp` (encode) | resample→128×64 | 160×120 | 8,192 B | — | internal sampling | 2:1 crop, area average |
 | Transport | `app_udp` (send) | 6 fragments, retry | panel frame | UDP/5000 | lwIP | `sendto()` | back to back |
-| Control | `app_udp` (feedback) | fps/drops→interval, quality | feedback | interval, step | lwIP | UDP/5001 | 39–41 deadband |
+| Control | `app_udp` (feedback) | fps/drops→interval, quality | feedback | interval, step | lwIP | UDP/5001 | 29–31 deadband |
 | Flash | `app_udp` (flash) | AEC+avg hysteresis/dwell | brightness | GPIO4 | GPIO | — | 600/250/3 s |
 | Network | `app_wifi` (CAM) | STA/reconnect/APSTA | config | network | esp_wifi | `app_wifi_start()` | PS=NONE |
 | Network | `app_wifi_ap` (C5) | SoftAP/stations | config | AP | esp_wifi | `app_wifi_ap_start()` | hidden |
@@ -511,6 +522,8 @@ typedef struct {
 | `app_button_take_short` | `bool app_button_take_short(void)` | C5 main | yes (volatile) | no | consumes event | — |
 | `app_button_take_long` | `bool app_button_take_long(void)` | C5 main | yes | no | consumes event | — |
 | `image_view_agc_state` | `bool image_view_agc_state(int *lo, int *hi, int *gain_x10)` | C5 main (logging) | reads render-owned statics | no | copies out | false while the mapping is still identity |
+| `app_sd_start` | `esp_err_t app_sd_start(void)` | CAM main | once | no | creates one task | `ESP_ERR_NO_MEM` |
+| `app_sd_get` | `void app_sd_get(app_sd_state_t *out)` | CAM HTTP handler | yes (mutex, 50 ms) | no | copies out | — |
 | `app_button_take` (Planned) | `bool app_button_take(app_button_key_t key, app_button_event_t event)` | C5 main | yes | no | consumes event | — |
 | `ssd1306_flush` | `esp_err_t ssd1306_flush(ssd1306_t *dev)` | C5 display | no | I2C 200 ms/op | — | I2C errors |
 | `app_wifi_ap_sta_rssi` | `int app_wifi_ap_sta_rssi(void)` | C5 main | yes | no | — | −127 = none |
@@ -523,11 +536,14 @@ typedef struct {
 | CAM | `cam_udp` | 5 | 6,144 | **1 (pinned)** | boot | `fb_get`/`sendto`/delay |
 | CAM | `cam_fb` (feedback) | 4 | 3,072 | **0 (pinned)** | boot | `recvfrom` |
 | CAM | `mjpeg` (HTTP) | 5 | 4,096 | unpinned | browser | `send`/`fb_get` |
+| CAM | `app_sd` | 2 | 4,096 | unpinned | `app_sd_start` (+6 s) | mount / CMD13 / delay |
 | C5 | main | 1 | 8,192 | 0 (single-core) | boot | `wait_frame`/I2C |
 | C5 | `cam_udp` | 6 | 8,192 | 0 (single-core) | `cam_client_start` | `recvfrom`/`publish` |
 | C5 | `button` | 4 | 3,072 | 0 (single-core) | `app_button_start` | 10 ms delay |
 
 Encode/send (`cam_udp`) is pinned to core 1 so the JPEG decode and UDP bursts do not compete with Wi-Fi, lwIP and the HTTP server on core 0; measured 20.2–20.4 fps after pinning, with no regression.
+
+The SD monitor runs at priority 2, below the video tasks, and waits 6 s before its first mount: mounting during the boot ramp competed for pbufs (116 sendto ENOMEM retries and 45 dropped frames in the first 10 s), and after the delay the same boot costs 3 retries and 7 drops.
 
 **Priority rationale**:
 
@@ -685,6 +701,8 @@ The viewer stays on the captured frame; `KEY_FREEZE` returns to live video.
 | CAM | `s_panel` | 8,192 B | BSS | permanent |
 | CAM | UDP packet | 1,416 B | task stack | per frame |
 | CAM | tjpgd pool | 4,096 B | BSS | permanent |
+| CAM | `sdmmc_card_t` + FATFS work area | ~4–5 KB | internal heap | alloc on mount, freed on unmount |
+| CAM | `app_sd` task stack | 4,096 B | internal heap | from start |
 | C5 | `s_asm` | 24 KB | heap | boot |
 | C5 | `s_rx` | 2 KB | heap | boot |
 | C5 | `frame_buf` | 32 KB | heap | boot |
@@ -700,11 +718,16 @@ The viewer stays on the captured frame; `KEY_FREEZE` returns to live video.
 | CAM `APP_UDP_SOURCE` | `CONFIG_APP_UDP_SOURCE_JPEG` | `app_udp_start` | JPEG |
 | CAM `APP_UDP_HOST/PORT` | same | `udp_task` | 192.168.4.1:5000 |
 | CAM `APP_UDP_ADAPT` | same | feedback task | y |
-| CAM `APP_UDP_TARGET_FPS` | same | `PERIOD_MS`, deadband | 40 |
+| CAM `APP_UDP_TARGET_FPS` | same | `PERIOD_MS`, deadband | 30 |
 | CAM `APP_UDP_AUTO_QUALITY` | same | `quality_track` | y |
 | CAM `APP_UDP_GRAY_SCALE` | same | `tjpgd_gray_decode` | 0 |
 | CAM `APP_UDP_INTERVAL_MS` | same | interval initial | 10 |
 | CAM `APP_FLASH_*` | same | `update_flash` | 600/250/3000 |
+| CAM `APP_SD_ENABLE` | same | `app_sd_start` | y |
+| CAM `APP_SD_PIN_CLK/CMD/D0` | same | `slot_config` | 14/15/2 |
+| CAM `APP_SD_START_DELAY_MS` | same | `sd_task` | 6000 |
+| CAM `APP_SD_PROBE_MS` / `APP_SD_RETRY_MS` | same | `sd_task` | 1000 / 2000 |
+| CAM `APP_SD_LOG_DEBUG` | same | log levels | n |
 | CAM `APP_WIFI_*` | same | `app_wifi.c` | SSID/c5cam12345 |
 | C5 `APP_AP_*` | same | `app_wifi_ap.c` | hidden, ch6 |
 | C5 `APP_UDP_PORT` | same | `cam_client.c` | 5000 |
@@ -727,9 +750,9 @@ The viewer stays on the captured frame; `KEY_FREEZE` returns to live video.
 
 | Item | Criterion |
 |---|---|
-| Frame-rate vocabulary | product target 40 fps; control deadband 39–41 fps; acceptance ≥39 fps; measured 39.9–40.2 fps |
-| CAM per frame | capture + encode + send ≤22 ms (measured 21 ms at the ladder's top step) |
-| C5 per frame | fetch + render + flush ≤26 ms (measured 25–26 ms; flush 15 ms at 800 kHz) |
+| Frame-rate vocabulary | product target 30 fps; control deadband 29–31 fps; acceptance ≥29 fps; measured 30.0–30.7 fps |
+| CAM per frame | capture + encode + send ≤23 ms (measured 21–23 ms at the ladder's top step) |
+| C5 per frame | render + flush ≤26 ms (measured 19–20 ms of work; flush 14–15 ms at 800 kHz) |
 | Send errors | ≤1 in 5 minutes (transient ENOMEM acceptable) |
 | Drops | ≤1% of frames; one start-up drop is expected |
 | Quality ladder | settles and stays; no upward probe while the viewer is below 39 fps |
@@ -748,13 +771,13 @@ The viewer stays on the captured frame; `KEY_FREEZE` returns to live video.
 
 ## 8.0 Goal
 
-Raise end-to-end display rate to 40 fps while keeping transport stable (send errors=0, controlled drops, self-reconnect), then spend the leftover frame time on picture quality instead of on sleeping. The chapter is organized as metrics → localization → experiments → decisions → main line → comparison → pitfalls → backlog → methodology.
+Raise end-to-end display rate to 30 fps while keeping transport stable (send errors=0, controlled drops, self-reconnect), then spend the leftover frame time on picture quality instead of on sleeping. The chapter is organized as metrics → localization → experiments → decisions → main line → comparison → pitfalls → backlog → methodology.
 
 ## 8.1 Metrics
 
 | Metric | Definition | Source | Period | Log field | Threshold |
 |---|---|---|---|---|---|
-| fps | displayed frames / time | C5 `c5view` | 5 s | `N frames, X.X fps` | 39–41 normal; <38 low |
+| fps | displayed frames / time | C5 `c5view` | 5 s | `N frames, X.X fps` | 29–31 normal; <28 low |
 | agc | 2%/98% window and stretch | C5 `c5view` | 5 s | `agc LO-HI xG.G` | window drifts with the scene; gain ≤3.0 |
 | quality step | current ladder position | CAM `app_udp` | on change | `quality -> Q` | settles; reverts after a failed probe |
 | feed-forward / trim | sleep budget split | CAM `app_udp` | 5 s | `interval N ms (feed-forward F, trim T)` | F ≥ 0, T within ±8 |
@@ -814,6 +837,10 @@ Real chain:
 | E19 | pacing needs feed-forward | interval rule | 5 ms integrator → `period − work` + ±1 ms/s trim | converges in 10–20 s, overshoots to 42.6 then 39–41 | 39.9–40.2 fps, trim settles at −1…0 | 150 s | one-window convergence instead of a slow walk | yes | old integrator |
 | E20 | half-size decode is expensive | decode scale | tjpgd scale 1 → 0 (full luma) | encode 14–15 ms at 80×60 | encode 17–18 ms at 160×120, still 40 fps | 90 s + 150 s | tjpgd cost is the entropy decode, not the output size | yes (scale 0 default) | `APP_UDP_GRAY_SCALE=1` |
 | E21 | quality ladder holds target | sensor quality | q12 → 9 → 7 → 5 driven by idle time | fps 40.0, encode 15 ms, jpeg 3.0 KB | fps 40.0, encode 17 ms, jpeg 3.9–5.0 KB | 150 s | ladder settles at the last step with 3 ms idle left | yes | `APP_UDP_AUTO_QUALITY=n` |
+| E23 | 30 fps buys quality, not more fps | target | 40 → 30 fps | 40 fps, 3 ms idle, q5 | 30 fps, 9–14 ms idle, ladder reaches q3 (jpeg 4.0 → 6.1 KB, encode 17 → 19 ms) | 150 s | the extra margin goes to the ladder, frame rate stays 30 | yes | `APP_UDP_TARGET_FPS=40` |
+| E24 | ladder never probed below the nominal rate | probe condition | `fps >= target` → `fps >= target − 1` | ladder stuck at q12 although 14 ms were idle | climbs 12 → 9 → 7 → 5 → 3 | 120 s | the pacer settles a little under target, so "at target" must mean the deadband floor | yes | old condition |
+| E25 | SD slot init breaks the camera | slot config | partially filled `sdmmc_slot_config_t` (cd = 0) → `SDMMC_SLOT_NO_CD` | `cam_hal: Failed to get frame: timeout` every 4 s, 30 fps unusable | no timeouts, 30.0 fps | 45 s each | `cd = GPIO0` is the camera XCLK; the slot claim stole the clock | yes | restore the zeroed struct |
+| E26 | SD mount competes with the video ramp | mount timing | mount at boot → 6 s delay | 116 sendto ENOMEM retries, 45 dropped frames | 3 retries, 7 drops | boot + 150 s | pbuf pressure during the ramp | yes | `APP_SD_START_DELAY_MS=0` |
 | E22 | auto contrast beats a fixed gain | viewer gain | 110% fixed → 2%/98% percentile stretch | dim scene drawn inside 55/255 of the range | dim 10–126 → 2.1×; bright 19–251 → 1.0× | 150 s | full tonal range reaches the dither | yes | `APP_VIEW_AGC=n` |
 | E17 | I2C overclock raises display ceiling | I2C clock | 400 → 600 → 800 kHz | 400: flush 25 ms, 32.2 fps max | 600: 18 ms, 40.4 fps; 800: 15 ms, 45.1 fps; 0 errors | 18 s each, pacing off | 800 kHz stable on this module; out of spec | yes (800 in sdkconfig; Kconfig default 400) | 400 kHz |
 
@@ -834,6 +861,9 @@ Real chain:
 | Nearest → area average / bilinear | 1.6× block enlargement, 1.25× moire | cheaper than a bigger sensor mode | no measurable cost (inside encode) | none | adopted |
 | Fixed gain → auto contrast | fixed 110% clipped or crushed | use the panel's range | 1.0–2.1× depending on the scene (E22) | EMA tuning; gain cap needed | adopted |
 | Quality ladder on idle frame time | idle time slept away | better JPEG for free | q5, +2 ms encode, 40 fps held (E21) | oscillation risk → revert + dwell backoff | adopted |
+| 40 → 30 fps target | 3 ms of margin left no room | margin for air jitter and for quality | q3 reached, encode 19 ms, 30.0 fps (E23) | lower frame rate | adopted |
+| SD presence by polling | no card-detect switch on the board | hot plug without an interrupt | mount 30 GB card, CMD13 every 1 s | removal noticed up to 2 s late | adopted |
+| SD monitor starts 6 s in | 116 ENOMEM retries, 45 drops | keep the boot ramp clean | 3 retries, 7 drops (E26) | card appears 6 s later | adopted |
 | YUV422 raw | no decode | fastest | encode 2 ms but capture 74 ms (~13.5 fps) | lower fps | rejected |
 | RTSP+H.264/265 | bitrate/compat | standard | no HW codec; I2C 30 fps wall | complexity/latency | rejected |
 
@@ -850,6 +880,7 @@ Real chain:
 | S4 | stable 20 fps | 18.5–20.5 fps | tjpgd Y-only + 1/2 |
 | S5 | 40 fps | 39.9–40.2 fps | I2C 800 kHz, fragment gap removed, feed-forward pacing |
 | S6 | 40 fps + best picture the budget allows | 39.9–40.2 fps at q5 | full-size luma, area-average/bilinear, auto contrast, quality ladder |
+| S7 | 30 fps + margin for quality | 30.0–30.7 fps at q3 | target lowered, ladder extended to q3, 9–14 ms of frame time spent on quality |
 
 ### 8.5.2 Factor Breakdown
 
@@ -881,7 +912,8 @@ Real chain:
 - Trim: the 1 Hz feedback moves a ±8 ms trim by 1 ms per second — `fps < 39` −1, `fps > 41` +1, `drops > 2` +2 — to absorb what the work measurement cannot see (tick rounding, the viewer's own render).
 - Convergence: 3 ms feed-forward + 17 ms encode + 4 ms send + 1 ms misc = 25 ms = 40.0 fps (measured 39.9–40.2 over 150 s).
 - Boundaries: feedback loss → the feed-forward part keeps holding the rate, so a lost feedback packet no longer freezes the pacing (this is the mitigation for the old risk); air degradation → drops → trim +2 → slightly slower; memory pressure → decode failure/frame drops.
-- Oscillation: the earlier ±5 ms integrator pointed at 18–20 overshot to 42.6 fps before settling when the target moved to 40; the feed-forward term removes that walk. The 39–41 deadband plus a 1 ms trim step keeps the hunt under ±0.5 fps.
+- Oscillation: the earlier ±5 ms integrator pointed at 18–20 overshot to 42.6 fps before settling when the target moved to 40; the feed-forward term removes that walk. The 29–31 deadband plus a 1 ms trim step keeps the hunt under ±0.5 fps.
+- Headroom: at 30 fps the period is 33 ms against 19–23 ms of work, so the trim rarely leaves 0 and a busy scene or an air hiccup no longer threatens the target — that margin is what the quality ladder spends.
 
 ### 8.5.4 Spending the idle frame time on quality
 
@@ -891,7 +923,7 @@ Three knobs, two boards, and none of them sleeps:
 |---|---|---|---|
 | Auto contrast | C5 `image_view` | 2%/98% percentile of every frame, quarter-step EMA, 3.0× cap | gain 1.0× (bright 19–251) … 2.1× (dim 10–126) |
 | Resampling | CAM `app_udp` | area average when shrinking, bilinear when enlarging | inside encode, no measurable cost |
-| Sensor JPEG quality | CAM `app_udp` | ladder 16/12/9/7/5 on idle frame time | 12 → 9 → 7 → 5 in 37 s, encode 15 → 17 ms |
+| Sensor JPEG quality | CAM `app_udp` | ladder 16/12/9/7/5/3 on idle frame time | 12 → 9 → 7 → 5 → 3, encode 15 → 19 ms |
 
 The ladder is the only mechanism that trades fps for quality, so it is the only one that can oscillate. Its rules:
 
@@ -912,7 +944,8 @@ Quality is second-order for the JPEG steps and first-order for the resampling an
 | Adaptive | 16.4–16.9 | encode 22–24/send 9 | fetch 28–31/flush 25 | 8.2 KB |
 | tjpgd gray | 18.5–20.5 | encode 11–12/send 11 | fetch 21–24/flush 25 | 8.2 KB |
 | 40 fps + I2C 800 kHz | 39.9–40.2 | encode 17/send 4 | fetch 5/render 5–6/flush 15 | 8.2 KB |
-| + quality ladder (q5) | **39.9–40.2** | encode 17, jpeg 3.9–5.0 KB | render 5–6/flush 15 (800 kHz) | 8.2 KB |
+| + quality ladder (q5) | 39.9–40.2 | encode 17, jpeg 3.9–5.0 KB | render 5–6/flush 15 (800 kHz) | 8.2 KB |
+| 30 fps + ladder (q3) | **30.0–30.7** | encode 19, jpeg 4.0–6.1 KB, sleep 9–14 ms | fetch 13/render 5/flush 14 | 8.2 KB |
 
 ## 8.7 Pitfalls and Root Causes
 
@@ -931,6 +964,9 @@ Quality is second-order for the JPEG steps and first-order for the resampling an
 | Ladder dropped to quality 16 at boot | `fps_x10 == 0` before the viewer's first report looked like a dead link | ignore the first report / require two low seconds | boot stays at 12 then climbs | treat "no measurement" as "no decision" |
 | Single low second reset the ladder | 1 s windows are noisy | require 2 consecutive low windows | ladder stays up under jitter | debounce every automatic decision |
 | Auto contrast amplified noise | a 24-level window was stretched 10× | cap the stretch at 3.0× and widen the window | gain ≤3.0 in logs | always cap an automatic gain |
+| SD slot takes the camera down | `sdmmc_slot_config_t` is not zero-safe: `cd = 0` means GPIO0, the camera XCLK | use `SDMMC_SLOT_NO_CD/NO_WP` and `GPIO_NUM_NC` for unused data lines | no frame timeouts | never leave an unused GPIO field at 0 |
+| Card never mounts, ACMD41 invalid | no card in the slot (the bus floats) | treat it as the normal "absent" state and retry | `card in` appears once a card is inserted | verify presence before debugging the driver |
+| SD mount drops frames | mount during the Wi-Fi/camera boot ramp | 6 s start delay | 45 → 7 drops | serialise allocations away from the start-up window |
 | RTSP not viable | no HW codec; I2C wall | reject | architecture analysis | check hardware first |
 
 ## 8.8 Unimplemented Optimizations
@@ -978,6 +1014,8 @@ flowchart LR
   I --> C
   J[app_button] --> E
   K[app_http] -.-> A
+  L[app_sd] -.->|mount / CMD13| M[(microSD)]
+  K -.->|/status| L
 ```
 
 ## 9.2 Synchronous Calls
@@ -1076,7 +1114,7 @@ Packed little-endian; magic discrimination; C5 accepts format 0/1; `reserved` pl
 
 - **GPIO0 is the BOOT strapping pin** (assigned to `KEY_SHUTTER`); holding it at reset enters download mode. Confirm the hardware wiring or use a non-strapping pin.
 - C5 BOOT pin identity (current GPIO0 produces no events); multi-key GPIOs 3/0/1 decided.
-- SDMMC 1-bit pins 14/15/2 not yet verified on the board.
+- SDMMC 1-bit pins 14/15/2 verified: a 30 GB FAT32 card mounts at 20 MHz. Pulling the card mid-run is still untested.
 - Preview count N=10 default; confirm.
 - Shutter behavior: direct save of the current frame; viewer stays on it; confirm that `KEY_FREEZE` is the only way back to video.
 - License compatibility: GPL-2.0 was chosen, but the vendored `esp32-camera` and `esp_jpeg` components are Apache-2.0. Apache-2.0 is not GPLv2-compatible; review before redistribution (GPLv3 or component-level licensing may be required).
@@ -1138,13 +1176,18 @@ See 7.2 for full prototypes, thread safety, timeouts, ownership and error codes;
 | `APP_UDP_SOURCE` | JPEG | recommended |
 | `APP_UDP_HOST/PORT` | 192.168.4.1:5000 | target |
 | `APP_UDP_ADAPT` | y | feed-forward + trim pacing |
-| `APP_UDP_TARGET_FPS` | 40 | 25 ms frame period |
+| `APP_UDP_TARGET_FPS` | 30 | 33 ms frame period |
 | `APP_UDP_AUTO_QUALITY` | y | quality ladder |
 | `APP_UDP_GRAY_SCALE` | 0 | full-size luma decode |
 | `APP_UDP_INTERVAL_MS` | 10 | starting value only |
 | `APP_FLASH_DARK_AEC` | 600 | on threshold |
 | `APP_FLASH_BRIGHT_AEC` | 250 | off threshold |
 | `APP_FLASH_DWELL_MS` | 3000 | dwell |
+| `APP_SD_ENABLE` | y | hot-plug monitor |
+| `APP_SD_PIN_CLK/CMD/D0` | 14/15/2 | 1-bit SDMMC |
+| `APP_SD_START_DELAY_MS` | 6000 | keep the boot ramp clean |
+| `APP_SD_PROBE_MS` / `APP_SD_RETRY_MS` | 1000 / 2000 | presence check / mount retry |
+| `APP_SD_LOG_DEBUG` | n | restore the driver's own logs |
 
 ## 11.4 Repository Layout
 
