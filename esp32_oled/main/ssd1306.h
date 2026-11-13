@@ -15,12 +15,17 @@ typedef struct {
     uint8_t height; /* 32 or 64 */
     uint8_t pages;
     uint8_t fb[SSD1306_WIDTH * SSD1306_MAX_HEIGHT / 8];
+    uint8_t shadow[SSD1306_WIDTH * SSD1306_MAX_HEIGHT / 8]; /* last content sent */
 } ssd1306_t;
 
 esp_err_t ssd1306_init(ssd1306_t *dev, i2c_master_bus_handle_t bus, uint8_t addr,
                        uint8_t height, uint32_t scl_hz);
 
 esp_err_t ssd1306_flush(ssd1306_t *dev);
+
+/* Writes only the pages that differ from the last flush. On an I2C error the
+   shadow for the affected page is left stale, so the next call retries it. */
+esp_err_t ssd1306_flush_changed(ssd1306_t *dev);
 
 void ssd1306_clear(ssd1306_t *dev);
 void ssd1306_pixel(ssd1306_t *dev, int x, int y, bool on);

@@ -389,7 +389,7 @@ Driver (esp32-camera/i2c_master/gpio/lwip/esp_wifi)
 - **Responsibility**: I2C init, framebuffer, pixel/rect/text, full refresh.
 - **Interfaces**: `ssd1306_init/flush/clear/pixel/fill_rect/text`.
 - **Metric**: full 1,024 B at 400 kHz measured 25–33 ms.
-- **Trade-off**: full refresh is self-healing; partial refresh was removed.
+- **Trade-off**: full refresh is the default and self-healing. `ssd1306_flush_changed()` is available behind `APP_VIEW_PARTIAL` (default n): at max pacing it measured **29.5 fps vs 32.2 fps** for full refresh because dithering changes almost every page; a full refresh every N frames and after any I2C error keeps it safe.
 
 ### 5.2.5 `main`
 
@@ -683,6 +683,8 @@ The viewer stays on the captured frame; `KEY_FREEZE` returns to live video.
 | C5 `APP_BUTTON_SHUTTER_GPIO` (planned) | same | `app_button` | **0** |
 | C5 `APP_BUTTON_PREVIEW_GPIO` (planned) | same | `app_button` | **1** |
 | C5 `APP_PREVIEW_COUNT` (planned) | same | preview | **10** |
+| C5 `APP_VIEW_PARTIAL` | same | `ssd1306_flush_changed` | n |
+| C5 `APP_VIEW_FULL_REFRESH_FRAMES` | same | full-refresh cadence | 120 |
 | C5 `APP_VIEW_*` | same | `image_view.c` | 110%, dither y |
 | C5 `CONFIG_ESP_MAIN_TASK_STACK_SIZE` | same | main | 8192 |
 
@@ -768,6 +770,7 @@ Real chain:
 | E13 | decode still costly | format | esp_jpeg → tjpgd Y-only | encode 22–24 | **11–12 ms** | 5 s×8 | ceiling ~40 fps | yes | esp_jpeg |
 | E14 | flash criterion wrong | criterion | avg → AEC+avg fallback | always on/off | on avg 19, off aec 168/avg 121 | 5 min | works | yes | thresholds |
 | E15 | busy scene disconnects | buffer | JPEG 3,840 B → 32 KB | drops/LOST | 5 min stable | 5 min | root cause fixed | yes | auto |
+| E16 | partial refresh raises fps | refresh | changed pages + full every 120 | full: 32.2 fps (flush 25 ms) | partial: 29.0–29.5 fps (flush 27 ms) | 20 s, pacing off | dithering changes most pages; no gain | no (opt-in) | full refresh |
 
 ## 8.4 Architecture Decisions
 
@@ -778,7 +781,7 @@ Real chain:
 | C5 decode → CAM decode | C5 heap/CPU | encode at edge | C5 zero decode, 8.2 KB | CAM load | adopted |
 | Full → 1/2 decode | encode 37 ms | less decode | 22 ms | softer image | adopted |
 | esp_jpeg → tjpgd Y | chroma/RGB conversion | decode only Y | 11–12 ms | vendored tjpgd | adopted |
-| Partial → full refresh | little gain/dirty pages | self-healing | draw 25–33 ms | static bus cost | adopted |
+| Full refresh default, partial opt-in | partial skipped few pages | self-healing | full 32.2 fps vs partial 29.5 fps at max | dithered pages change; I2C glitch risk | full default; partial opt-in |
 | YUV422 raw | no decode | fastest | encode 2 ms but capture 74 ms (~13.5 fps) | lower fps | rejected |
 | RTSP+H.264/265 | bitrate/compat | standard | no HW codec; I2C 30 fps wall | complexity/latency | rejected |
 
@@ -850,7 +853,7 @@ Real chain:
 |---|---|---|---|---|
 | UDP NACK/FEC | fewer drops | bandwidth/complexity | packet-loss injection | medium |
 | 4bpp/RLE | half bytes, 25–30 fps | C5 decompress/quality | same scene | medium |
-| Hardened partial refresh | less bus on static scenes | stability | soak + fault injection | low |
+| Hardened partial refresh | implemented behind `APP_VIEW_PARTIAL` | measured slower with dithering (29.5 vs 32.2 fps) | 20 s max test | opt-in only |
 | AP channel auto-scan | interference resilience | +1–2 s boot | multi-channel | low |
 | Feedback timeout recovery | recover after feedback loss | avoid overspeed | cut feedback | medium |
 | OTA/dual partition | operability | partition/rollback | upgrade test | low |
@@ -965,7 +968,7 @@ Packed little-endian; magic discrimination; C5 accepts format 0/1; `reserved` pl
 ## 10.4 Tuning to Verify
 
 - ≥24 h soak, temperature, range; busy-scene JPEG max vs 32 KB.
-- Button GPIOs/semantics; flash ping-pong in bright/dark extremes; partial refresh hardening; power.
+- Button GPIOs/semantics; flash ping-pong in bright/dark extremes; power.
 
 ## 10.5 Capture and Preview Evolution (Decided, Planned)
 

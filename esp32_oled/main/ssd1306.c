@@ -87,6 +87,7 @@ esp_err_t ssd1306_init(ssd1306_t *dev, i2c_master_bus_handle_t bus, uint8_t addr
     if (err != ESP_OK) {
         return err;
     }
+    memset(dev->shadow, 0, sizeof(dev->shadow));
     return ssd1306_flush(dev);
 }
 
@@ -111,6 +112,40 @@ esp_err_t ssd1306_flush(ssd1306_t *dev)
         if (err != ESP_OK) {
             return err;
         }
+    }
+    memcpy(dev->shadow, dev->fb, fb_len);
+    return ESP_OK;
+}
+
+esp_err_t ssd1306_flush_changed(ssd1306_t *dev)
+{
+    uint8_t buf[1 + DATA_CHUNK];
+    buf[0] = CTRL_DATA;
+
+    for (int page = 0; page < dev->pages; page++) {
+        const uint8_t *cur = &dev->fb[(size_t)page * SSD1306_WIDTH];
+        uint8_t *ref = &dev->shadow[(size_t)page * SSD1306_WIDTH];
+        if (memcmp(cur, ref, SSD1306_WIDTH) == 0) {
+            continue;
+        }
+
+        const uint8_t window[] = {
+            0x21, 0x00, SSD1306_WIDTH - 1, /* column range */
+            0x22, (uint8_t)page, (uint8_t)page, /* page range */
+        };
+        esp_err_t err = write_cmds(dev, window, sizeof(window));
+        if (err != ESP_OK) {
+            return err;
+        }
+        for (size_t off = 0; off < SSD1306_WIDTH; off += DATA_CHUNK) {
+            size_t n = (SSD1306_WIDTH - off) < DATA_CHUNK ? (SSD1306_WIDTH - off) : DATA_CHUNK;
+            memcpy(&buf[1], cur + off, n);
+            err = i2c_master_transmit(dev->i2c_dev, buf, n + 1, I2C_TIMEOUT_MS);
+            if (err != ESP_OK) {
+                return err;
+            }
+        }
+        memcpy(ref, cur, SSD1306_WIDTH);
     }
     return ESP_OK;
 }

@@ -50,6 +50,21 @@ menu "ESP32-C5 camera viewer"
         bool "Button pulls the GPIO low when pressed"
         default y
 
+    config APP_VIEW_PARTIAL
+        bool "Only refresh changed OLED pages"
+        default n
+        help
+            Compares each page with the last content sent and skips unchanged
+            pages. Dithered video changes most pages, so the gain is small for
+            moving scenes and large for static ones. A full refresh runs every
+            N frames and after any I2C error to clear stale pages.
+
+    config APP_VIEW_FULL_REFRESH_FRAMES
+        int "Full refresh every N frames (0 = never)"
+        range 0 1000
+        default 120
+        depends on APP_VIEW_PARTIAL
+
     config APP_VIEW_GAIN
         int "Display brightness gain (percent)"
         range 50 300

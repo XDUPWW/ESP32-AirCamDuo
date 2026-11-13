@@ -200,6 +200,10 @@ void app_main(void)
     unsigned long frames = 0;
     unsigned long frames_since_log = 0;
     unsigned long errors = 0;
+#if defined(CONFIG_APP_VIEW_PARTIAL)
+    unsigned long display_frames = 0;
+    bool force_full = true;
+#endif
     unsigned long timeouts_since_log = 0;
     int64_t last_log = esp_timer_get_time();
     int64_t grab_us_sum = 0;
@@ -259,7 +263,17 @@ void app_main(void)
         const int64_t render_start = esp_timer_get_time();
         image_view_render(disp, frame.data, frame.width, frame.height);
         const int64_t render_end = esp_timer_get_time();
+#if defined(CONFIG_APP_VIEW_PARTIAL)
+        bool full = force_full;
+        if (!full && CONFIG_APP_VIEW_FULL_REFRESH_FRAMES > 0) {
+            full = (display_frames % CONFIG_APP_VIEW_FULL_REFRESH_FRAMES) == 0;
+        }
+        err = full ? ssd1306_flush(disp) : ssd1306_flush_changed(disp);
+        force_full = (err != ESP_OK);
+        display_frames++;
+#else
         err = ssd1306_flush(disp);
+#endif
         const int64_t flush_end = esp_timer_get_time();
         if (err != ESP_OK) {
             errors++;

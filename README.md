@@ -68,6 +68,8 @@ Bench measurements on the current two boards; not a guarantee.
 | Metric | Value |
 |---|---|
 | Displayed fps | 18.5–20.5 (steady) |
+| Max display (pacing off, full refresh) | 32.2 fps (flush 25 ms) |
+| Max with partial refresh | 29.5 fps (flush 27 ms; dithering changes most pages) |
 | Frame | 128×64 gray8, 8,192 B, 6 UDP fragments |
 | Camera: capture / encode / send | 0 / 11–12 / 11–12 ms |
 | Viewer: fetch / render / flush | 21–24 / 5 / 25 ms |
@@ -105,6 +107,7 @@ cd esp32_oled && idf.py build && idf.py -p COM8 flash monitor
 | Viewer | `APP_BUTTON_PREVIEW_GPIO` (planned) | `1` |
 | Viewer | `APP_PREVIEW_COUNT` (planned) | `10` |
 | Viewer | `APP_VIEW_GAIN` / `APP_VIEW_DITHER` | `110` / `y` |
+| Viewer | `APP_VIEW_PARTIAL` / `APP_VIEW_FULL_REFRESH_FRAMES` | `n` / `120` |
 | Camera | `APP_WIFI_MODE` | `STA` (joins viewer AP) |
 | Camera | `APP_WIFI_STA_SSID` / `APP_WIFI_STA_PASSWORD` | `ESP32-C5-CAM` / `c5cam12345` |
 | Camera | `APP_WIFI_AP_SSID` / `APP_WIFI_AP_PASSWORD` | `ESP32-CAM` / `esp32cam123` (fallback AP) |
@@ -134,7 +137,7 @@ TODO.md         Current gaps and roadmap
 - Multi-button freeze/shutter/preview, SD capture and image preview are planned, not implemented.
 - GPL-2.0 is selected, but the vendored `esp32-camera` and `esp_jpeg` components are Apache-2.0 (not GPLv2-compatible); review before redistribution.
 - XCLK is fixed at 20 MHz; 40 MHz overclocking is not used because the sensor is not the bottleneck at QQVGA.
-- The display’s I2C full refresh (25–33 ms) caps the panel at ~30–33 fps.
+- The display’s I2C full refresh (25–33 ms) caps the panel at ~32 fps; partial refresh is opt-in (`APP_VIEW_PARTIAL`) but measured slower with dithering (29.5 vs 32.2 fps).
 - No OTA, no automated tests.
 
 ## Documentation
